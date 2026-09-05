@@ -1,0 +1,36 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "host-tests",
+      "displayName": "Host unit tests",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-host",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "firmware",
+      "displayName": "LPC5528 application firmware",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-firmware",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "HUNTSMAN_BUILD_FIRMWARE": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "host-tests", "configurePreset": "host-tests" },
+    { "name": "firmware", "configurePreset": "firmware" }
+  ],
+  "testPresets": [
+    {
+      "name": "host-tests",
+      "configurePreset": "host-tests",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

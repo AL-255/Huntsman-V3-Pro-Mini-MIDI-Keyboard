@@ -1,0 +1,13 @@
+
+
+/*!
+@defgroup dma DMA: Direct Memory Access Controller Driver
+@details The MCUXpresso SDK provides a peripheral driver for the Direct Memory Access (DMA)
+          of MCUXpresso SDK devices.
+
+# Typical use case{#DMATypicalUseCase}
+
+## DMA Operation{#DMAOper}
+
+Refer to the driver examples codes located at \<SDK_ROOT\>/boards/\<BOARD\>/driver_examples/dma*/
+

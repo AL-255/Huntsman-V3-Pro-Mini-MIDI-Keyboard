@@ -1,0 +1,356 @@
+#include "usb_composite.h"
+
+#include <string.h>
+
+#include "board.h"
+#include "debug.h"
+#include "updater_protocol.h"
+#include "usb_descriptors.h"
+#include "usb_errata.h"
+#include "usb_device_cdc_acm.h"
+#include "usb_device_config.h"
+#include "usb_device_hid.h"
+
+#define USB_CONTROLLER_ID ((uint8_t)kUSB_ControllerLpcIp3511Hs0)
+#define USB_BUFFER __attribute__((section(".usb_sram"), aligned(64)))
+
+static usb_device_handle s_device;
+static volatile bool s_attached;
+static volatile bool s_keyboard_busy;
+static volatile bool s_midi_busy;
+static volatile bool s_cdc_busy;
+static volatile bool s_cdc_dte_present;
+static volatile bool s_bootloader_pending;
+static uint32_t s_bootloader_requested_at;
+static usb_device_class_config_struct_t s_classConfig[3];
+
+USB_BUFFER static keyboard_report_t s_keyboard_report;
+USB_BUFFER static uint8_t s_updater_request[UPDATER_FRAME_SIZE];
+USB_BUFFER static uint8_t s_updater_response[UPDATER_FRAME_SIZE];
+USB_BUFFER static uint8_t s_midi_tx[4];
+USB_BUFFER static uint8_t s_midi_rx[USB_HS_BULK_PACKET];
+USB_BUFFER static uint8_t s_cdc_rx[USB_HS_BULK_PACKET];
+USB_BUFFER static uint8_t s_line_coding[7];
+USB_BUFFER static uint8_t s_abstract_state[2];
+USB_BUFFER static uint8_t s_country_code[2];
+
+void debug_cdc_send_complete(void);
+
+static usb_status_t keyboard_callback(class_handle_t handle, uint32_t event, void *param)
+{
+    usb_device_hid_report_struct_t *report = param;
+    switch (event)
+    {
+        case kUSB_DeviceHidEventSendResponse:
+            s_keyboard_busy = false;
+            return kStatus_USB_Success;
+        case kUSB_DeviceHidEventGetReport:
+            report->reportBuffer = (uint8_t *)&s_keyboard_report;
+            report->reportLength = sizeof(s_keyboard_report);
+            return kStatus_USB_Success;
+        case kUSB_DeviceHidEventSetIdle:
+        case kUSB_DeviceHidEventGetIdle:
+        case kUSB_DeviceHidEventSetProtocol:
+        case kUSB_DeviceHidEventGetProtocol:
+            return kStatus_USB_Success;
+        default:
+            return kStatus_USB_InvalidRequest;
+    }
+}
+
+static usb_status_t updater_callback(class_handle_t handle, uint32_t event, void *param)
+{
+    usb_device_hid_report_struct_t *report = param;
+    switch (event)
+    {
+        case kUSB_DeviceHidEventRequestReportBuffer:
+            if ((report->reportType == USB_DEVICE_HID_REQUEST_GET_REPORT_TYPE_FEATURE) &&
+                (report->reportLength <= sizeof(s_updater_request)))
+            {
+                report->reportBuffer = s_updater_request;
+                return kStatus_USB_Success;
+            }
+            return kStatus_USB_InvalidRequest;
+
+        case kUSB_DeviceHidEventSetReport:
+            if ((report->reportType == USB_DEVICE_HID_REQUEST_GET_REPORT_TYPE_FEATURE) &&
+                (report->reportLength == sizeof(s_updater_request)))
+            {
+                const updater_action_t action = updater_protocol_handle(
+                    report->reportBuffer, report->reportLength, s_updater_response);
+                if (action == kUpdaterEnterBootloader)
+                {
+                    s_bootloader_pending = true;
+                    s_bootloader_requested_at = board_millis();
+                }
+                return (action == kUpdaterNoAction) ? kStatus_USB_InvalidRequest : kStatus_USB_Success;
+            }
+            return kStatus_USB_InvalidRequest;
+
+        case kUSB_DeviceHidEventGetReport:
+            if (report->reportType == USB_DEVICE_HID_REQUEST_GET_REPORT_TYPE_FEATURE)
+            {
+                report->reportBuffer = s_updater_response;
+                report->reportLength = sizeof(s_updater_response);
+                return kStatus_USB_Success;
+            }
+            return kStatus_USB_InvalidRequest;
+        default:
+            return kStatus_USB_InvalidRequest;
+    }
+}
+
+static usb_status_t midi_in_callback(usb_device_handle handle,
+                                    usb_device_endpoint_callback_message_struct_t *message, void *param)
+{
+    s_midi_busy = false;
+    return kStatus_USB_Success;
+}
+
+static usb_status_t midi_out_callback(usb_device_handle handle,
+                                     usb_device_endpoint_callback_message_struct_t *message, void *param)
+{
+    if (!s_attached || message->length == USB_CANCELLED_TRANSFER_LENGTH)
+        return kStatus_USB_Success;
+    /* MIDI input is reserved for future use; keep accepting packets. */
+    return USB_DeviceRecvRequest(handle, USB_MIDI_ENDPOINT, s_midi_rx,
+                                 g_midiEndpoints[0].maxPacketSize);
+}
+
+static usb_status_t midi_endpoints_init(usb_device_handle handle)
+{
+    /* NXP's PCM AudioStreaming class only accepts subclass 2 and iso IN.
+     * MIDIStreaming is subclass 3 with bulk endpoints: use the vendor DCI. */
+    for (unsigned i = 0; i < 2; ++i)
+    {
+        usb_device_endpoint_init_struct_t endpoint = {
+            .endpointAddress = g_midiEndpoints[i].endpointAddress,
+            .transferType = USB_ENDPOINT_BULK,
+            .maxPacketSize = g_midiEndpoints[i].maxPacketSize,
+            .zlt = 0u,
+            .interval = 0u,
+        };
+        usb_device_endpoint_callback_struct_t callback = {
+            .callbackFn = i ? midi_in_callback : midi_out_callback,
+            .callbackParam = NULL,
+        };
+        const usb_status_t status = USB_DeviceInitEndpoint(handle, &endpoint, &callback);
+        if (status != kStatus_USB_Success)
+            return status;
+    }
+    return USB_DeviceRecvRequest(handle, USB_MIDI_ENDPOINT, s_midi_rx,
+                                 g_midiEndpoints[0].maxPacketSize);
+}
+
+static usb_status_t cdc_callback(class_handle_t handle, uint32_t event, void *param)
+{
+    usb_device_cdc_acm_request_param_struct_t *request = param;
+    usb_device_endpoint_callback_message_struct_t *message = param;
+    switch (event)
+    {
+        case kUSB_DeviceCdcEventSendResponse:
+            s_cdc_busy = false;
+            debug_cdc_send_complete();
+            return kStatus_USB_Success;
+        case kUSB_DeviceCdcEventRecvResponse:
+            if (!s_attached || message == NULL || message->length == USB_CANCELLED_TRANSFER_LENGTH)
+            {
+                return kStatus_USB_Success;
+            }
+            /* Input is reserved for future diagnostics. */
+            return USB_DeviceCdcAcmRecv(handle, USB_CDC_DATA_ENDPOINT, s_cdc_rx,
+                                        g_cdcDataEndpoints[1].maxPacketSize);
+        case kUSB_DeviceCdcEventGetLineCoding:
+            *(request->buffer) = s_line_coding;
+            *(request->length) = sizeof(s_line_coding);
+            return kStatus_USB_Success;
+        case kUSB_DeviceCdcEventSetLineCoding:
+            if (request->isSetup != 0u)
+            {
+                *(request->buffer) = s_line_coding;
+                *(request->length) = sizeof(s_line_coding);
+            }
+            return kStatus_USB_Success;
+        case kUSB_DeviceCdcEventSetControlLineState:
+            s_cdc_dte_present = (request->setupValue & USB_DEVICE_CDC_CONTROL_SIG_BITMAP_DTE_PRESENCE) != 0u;
+            return kStatus_USB_Success;
+        case kUSB_DeviceCdcEventSetCommFeature:
+            if (request->setupValue == USB_DEVICE_CDC_FEATURE_ABSTRACT_STATE)
+            {
+                *(request->buffer) = s_abstract_state;
+                *(request->length) = sizeof(s_abstract_state);
+                return kStatus_USB_Success;
+            }
+            if (request->setupValue == USB_DEVICE_CDC_FEATURE_COUNTRY_SETTING)
+            {
+                *(request->buffer) = s_country_code;
+                *(request->length) = sizeof(s_country_code);
+                return kStatus_USB_Success;
+            }
+            return kStatus_USB_InvalidRequest;
+        case kUSB_DeviceCdcEventGetCommFeature:
+            if (request->setupValue == USB_DEVICE_CDC_FEATURE_ABSTRACT_STATE)
+            {
+                *(request->buffer) = s_abstract_state;
+                *(request->length) = sizeof(s_abstract_state);
+                return kStatus_USB_Success;
+            }
+            if (request->setupValue == USB_DEVICE_CDC_FEATURE_COUNTRY_SETTING)
+            {
+                *(request->buffer) = s_country_code;
+                *(request->length) = sizeof(s_country_code);
+                return kStatus_USB_Success;
+            }
+            return kStatus_USB_InvalidRequest;
+        case kUSB_DeviceCdcEventSerialStateNotif:
+            ((usb_device_cdc_acm_struct_t *)handle)->hasSentState = 0u;
+            return kStatus_USB_Success;
+        case kUSB_DeviceCdcEventSendBreak:
+            return kStatus_USB_Success;
+        default:
+            return kStatus_USB_InvalidRequest;
+    }
+}
+
+static usb_status_t device_callback(usb_device_handle handle, uint32_t event, void *param)
+{
+    switch (event)
+    {
+        case kUSB_DeviceEventBusReset:
+        {
+            uint8_t speed = USB_SPEED_FULL;
+            s_attached = false;
+            s_keyboard_busy = s_midi_busy = s_cdc_busy = false;
+            s_cdc_dte_present = false;
+            usb_errata_bus_reset();
+            if (USB_DeviceClassGetSpeed(USB_CONTROLLER_ID, &speed) == kStatus_USB_Success)
+            {
+                usb_descriptors_set_speed(speed);
+            }
+            return kStatus_USB_Success;
+        }
+        case kUSB_DeviceEventSetConfiguration:
+            s_attached = false;
+            s_midi_busy = false;
+            (void)USB_DeviceDeinitEndpoint(handle, USB_MIDI_ENDPOINT);
+            (void)USB_DeviceDeinitEndpoint(handle, USB_ENDPOINT_IN | USB_MIDI_ENDPOINT);
+            if ((param != NULL) && (*(uint8_t *)param == 1u))
+            {
+                s_attached = true;
+                if (midi_endpoints_init(handle) != kStatus_USB_Success)
+                {
+                    s_attached = false;
+                    return kStatus_USB_Error;
+                }
+                (void)USB_DeviceCdcAcmRecv(s_classConfig[2].classHandle, USB_CDC_DATA_ENDPOINT,
+                                           s_cdc_rx, g_cdcDataEndpoints[1].maxPacketSize);
+                debug_usb_configured();
+                return kStatus_USB_Success;
+            }
+            s_attached = false;
+            s_cdc_dte_present = false;
+            return kStatus_USB_Success;
+        case kUSB_DeviceEventSetInterface:
+            return kStatus_USB_Success;
+        default:
+            return usb_descriptors_handle_event(event, param);
+    }
+}
+
+static usb_device_class_config_struct_t s_classConfig[3] = {
+    {keyboard_callback, NULL, &g_keyboardClass},
+    {updater_callback, NULL, &g_updaterClass},
+    {cdc_callback, NULL, &g_cdcClass},
+};
+
+static usb_device_class_config_list_struct_t s_config_list = {
+    .config = s_classConfig,
+    .deviceCallback = device_callback,
+    .count = (uint8_t)(sizeof(s_classConfig) / sizeof(s_classConfig[0])),
+};
+
+void USB1_IRQHandler(void)
+{
+    USB_DeviceLpcIp3511IsrFunction(s_device);
+    USBHSD->INTEN |= USBHSD_INTEN_FRAME_INT_EN_MASK;
+}
+
+void usb_composite_init(void)
+{
+    usb_errata_init();
+    board_usb_clock_init();
+    memset(&s_keyboard_report, 0, sizeof(s_keyboard_report));
+    memset(s_updater_response, 0, sizeof(s_updater_response));
+    s_line_coding[0] = 0x00u;
+    s_line_coding[1] = 0xc2u;
+    s_line_coding[2] = 0x01u;
+    s_line_coding[3] = 0x00u; /* 115200 baud */
+    s_line_coding[4] = 0x00u; /* one stop bit */
+    s_line_coding[5] = 0x00u; /* no parity */
+    s_line_coding[6] = 0x08u; /* eight data bits */
+    if (USB_DeviceClassInit(USB_CONTROLLER_ID, &s_config_list, &s_device) != kStatus_USB_Success)
+    {
+        s_device = NULL;
+        return;
+    }
+    board_delay_ms(20u);
+    board_usb_isr_enable();
+    (void)USB_DeviceRun(s_device);
+}
+
+void usb_composite_service(void)
+{
+    if (s_bootloader_pending && ((uint32_t)(board_millis() - s_bootloader_requested_at) >= 20u))
+    {
+        board_enter_bootloader();
+    }
+}
+
+bool usb_keyboard_send(const keyboard_report_t *report)
+{
+    if (!s_attached || s_keyboard_busy)
+    {
+        return false;
+    }
+    memcpy(&s_keyboard_report, report, sizeof(s_keyboard_report));
+    s_keyboard_busy = USB_DeviceHidSend(s_classConfig[0].classHandle, USB_KEYBOARD_ENDPOINT,
+                                        (uint8_t *)&s_keyboard_report,
+                                        sizeof(s_keyboard_report)) == kStatus_USB_Success;
+    return s_keyboard_busy;
+}
+
+bool usb_midi_send(uint8_t cable_and_cin, uint8_t status, uint8_t data1, uint8_t data2)
+{
+    if (!s_attached || s_midi_busy)
+    {
+        return false;
+    }
+    s_midi_tx[0] = cable_and_cin;
+    s_midi_tx[1] = status;
+    s_midi_tx[2] = data1;
+    s_midi_tx[3] = data2;
+    s_midi_busy = USB_DeviceSendRequest(s_device, USB_MIDI_ENDPOINT,
+                                      s_midi_tx, sizeof(s_midi_tx)) == kStatus_USB_Success;
+    return s_midi_busy;
+}
+
+bool usb_cdc_write(const uint8_t *data, uint32_t length)
+{
+    if (!usb_cdc_ready() || s_cdc_busy)
+    {
+        return false;
+    }
+    s_cdc_busy = USB_DeviceCdcAcmSend(s_classConfig[2].classHandle, USB_CDC_DATA_ENDPOINT,
+                                      (uint8_t *)data, length) == kStatus_USB_Success;
+    return s_cdc_busy;
+}
+
+bool usb_cdc_ready(void)
+{
+    return s_attached && s_cdc_dte_present;
+}
+
+usb_device_handle usb_composite_device_handle(void)
+{
+    return s_device;
+}

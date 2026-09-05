@@ -1,0 +1,6 @@
+/build*/
+/.cache/
+compile_commands.json
+*.swp
+__pycache__/
+/.venv-audit/

@@ -1,0 +1,109 @@
+---
+
+device.hardware_data:
+  section-type: "manifest_content"
+  belong_to: set.device.LPC5528
+  contents:
+    generated_from_chip_model: "yes"
+    devices:
+      - id: "LPC5528"
+        full_name: "LPC5528"
+        name: "LPC5528"
+        platform: "LPC"
+        series: "LPC5500"
+        family: "LPC552x_S2x"
+        subfamily: "LPC5528"
+        frequency_mhz: 150
+        core:
+          - name: "Cortex-M33"
+            type: "cm33"
+            id: "cm33_core0"
+            description: ""
+            fpu: "SP_FPU"
+            dsp: true
+            mpu: true
+            sau: true
+        memory:
+          memoryBlock:
+            - id: "PROGRAM_FLASH"
+              name: "PROGRAM_FLASH"
+              addr: 0x0
+              size: 0x80000
+              type: "Flash"
+              access: "RO"
+              default: true
+              startup: true
+              aliases:
+                - name: "PROGRAM_FLASH_alias"
+                  addr: 0x10000000
+                  size: 0x80000
+                  access: "RW"
+            - id: "SRAM"
+              name: "SRAM"
+              addr: 0x20000000
+              size: 0x30000
+              type: "RAM"
+              access: "RW"
+              default: true
+              aliases:
+                - name: "SRAM_alias"
+                  addr: 0x30000000
+                  size: 0x30000
+                  access: "RW"
+            - id: "SRAMX"
+              name: "SRAMX"
+              addr: 0x4000000
+              size: 0x8000
+              type: "RAM"
+              access: "RW"
+              default: true
+              aliases:
+                - name: "SRAMX_alias"
+                  addr: 0x14000000
+                  size: 0x8000
+                  access: "RW"
+            - id: "USB_RAM"
+              name: "USB_RAM"
+              addr: 0x40100000
+              size: 0x4000
+              type: "RAM"
+              access: "RW"
+              default: true
+              aliases:
+                - name: "USB_RAM_alias"
+                  addr: 0x50100000
+                  size: 0x4000
+                  access: "RW"
+            - id: "SRAM4"
+              name: "SRAM4"
+              addr: 0x20040000
+              size: 0x4000
+              type: "RAM"
+              access: "RW"
+              default: true
+              aliases:
+                - name: "SRAM4_alias"
+                  addr: 0x30040000
+                  size: 0x4000
+                  access: "RW"
+            - id: "BootROM"
+              name: "BootROM"
+              addr: 0x3000000
+              size: 0x20000
+              type: "ROM"
+              access: "RO"
+              aliases:
+                - name: "BootROM_alias"
+                  addr: 0x13000000
+                  size: 0x20000
+                  access: "RO"
+        total_memory:
+          ram_size_kb: 240
+          flash_size_kb: 512
+        part:
+          - name: "LPC5528JBD100"
+          - name: "LPC5528JEV98"
+          - name: "LPC5528JBD64"
+          - name: "LPC5528JEV59"
+        modules:
+...
