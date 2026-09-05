@@ -2,8 +2,9 @@
 
 Scope: USB only. No optical, lighting, SPI, or I2C runtime is linked into the
 default image. The previous full-application code is retained but excluded
-by `HUNTSMAN_USB_ONLY=ON`. No device flash, reset, or mode change was performed
-during this work. Physical enumeration is still unverified.
+by `HUNTSMAN_USB_ONLY=ON`. The offline audit was followed by one explicitly
+authorized hardware flash. High-speed enumeration, driver binding, updater
+information queries, and CDC debug output succeeded; details below.
 
 ## Concrete defects corrected
 
@@ -98,8 +99,52 @@ immediately and supplies selected frame values. There is no modeled oscillator
 lock, elapsed electrical time, real NVIC preemption, host scheduling, bootloader
 execution, or physical reconnect. Transport reset intent is intercepted before
 board_enter_bootloader; these tests cannot establish the physical update round
-trip. Kernel log reads were attempted but denied without privileged
-authentication; no new dmesg observations are claimed.
+trip. Hardware observations below were collected separately with authorized
+privileged access; they are not results of the emulator.
+
+## Authorized hardware trial
+
+On 2026-09-05, the exact binary below, built from commit `7a84ca4`, was
+flashed once using the supplied `../updater` implementation. Preflight checked
+the binary size/hash and a single `1532:110e` bootloader on USB port `1-1`.
+The operation erased/programmed only the 128 KiB application region, received
+acknowledgments for all program blocks, and sent DFUExit. No flash readback was
+performed. The bootloader and secondary-controller firmware were not written.
+
+Observed after DFUExit:
+
+- Linux enumerated `1532:02b0`, device number 19 on the same port, at 480 Mbit/s.
+- Interface 0 bound to `usbhid`/`hid-generic` as a keyboard (`hidraw8`).
+- Interfaces 1/2 bound to `snd-usb-audio`; ALSA listed the device as card
+  `MIDI`, named `Huntsman V3 Pro Mini MIDI`.
+- Interfaces 4/5 bound to `cdc_acm`, exposing `/dev/ttyACM0`.
+- Supplied-updater information queries returned version `0201` and serial
+  `OPENHUNTSMAN0001`. The USB string descriptor independently reports
+  `OPENHUNTSMAN00000000`; these are currently distinct placeholder values.
+- A six-second raw CDC read at 115200 baud received 114 bytes: six complete
+  `USB service alive\r\n` messages. The USB device number remained 19.
+
+Relevant kernel messages (monotonic timestamps):
+
+```text
+[85249.757120] usb 1-1: new high-speed USB device number 19 using xhci_hcd
+[85249.883527] usb 1-1: New USB device found, idVendor=1532, idProduct=02b0, bcdDevice= 2.01
+[85249.969222] hid-generic 0003:1532:02B0.0047: input,hidraw8: USB HID v1.11 Keyboard [OpenHuntsman Huntsman V3 Pro Mini MIDI] on usb-0000:07:00.3-1/input0
+[85249.970289] usbhid 1-1:1.3: couldn't find an input interrupt endpoint
+[85250.020746] cdc_acm 1-1:1.4: ttyACM0: USB ACM device
+[85250.036163] usb 1-1: Quirk or no altset; falling back to MIDI 1.0
+[85250.879370] usb 1-1: usbfs: process 501759 (python3) did not claim interface 3 before use
+```
+
+Interface 3 is intentionally control-only; its missing interrupt endpoint
+message did not prevent updater information queries. The MIDI fallback and
+usbfs interface-claim messages are retained here rather than calling the log
+warning-free. No new enumeration failure appeared in the post-flash log.
+
+No second flash, application-to-bootloader command, explicit USB reset, or manual
+recovery was used in this trial. MIDI payload traffic, non-neutral NKRO key
+reports, full-speed hardware operation, suspend/resume, long-duration stability,
+and application-to-bootloader recovery were not physically tested.
 
 ## Tested image and remaining boundary
 
@@ -110,9 +155,9 @@ MSP `0x04008000`, reset vector `0x2000019d`. No optical/lighting/SPI/I2C
 runtime symbols remain in the linked image. Newlib file-syscall linker warnings
 remain; the build is not represented as warning-free.
 
-The above results justify a more informed review, not a guarantee that a
-hardware trial will enumerate or retain software recovery. Inherited hardware
-state, electrical PHY behavior, arbitrary interrupt interleavings, and broader
-USB compliance/error paths remain outside the tests. No automatic flash is
-part of any build/test target. A hardware trial still requires explicit user
-approval; do not silently return to speculative flash/recovery cycles.
+The hardware trial establishes initial high-speed USB operation on this host,
+not general USB compliance or a proven software recovery path. Other inherited
+hardware states, PHY conditions, arbitrary interrupt interleavings, and broader
+USB compliance/error paths remain untested. No automatic flash is part of any
+build/test target. Another hardware trial requires explicit user approval;
+do not silently return to speculative flash/recovery cycles.

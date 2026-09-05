@@ -4,8 +4,12 @@ An independent LPC5528 application for the Razer Huntsman V3 Pro Mini. It is
 designed for the keyboard's existing bootloader and the 128 KiB application
 image linked at `0x20000000`; the bootloader is neither included nor modified.
 
-Current scope: **USB bring-up only**, not yet physically validated. The default
-`HUNTSMAN_USB_ONLY=ON` build uses `src/main_usb.c`; optical and lighting code
+Current scope: **USB bring-up only**. A single authorized flash on 2026-09-05
+enumerated at high speed on Linux with keyboard, MIDI, and CDC drivers bound.
+CDC emitted six `USB service alive` messages during a six-second read, and
+the supplied updater's version/serial queries succeeded. This is a USB
+bring-up checkpoint, not validation of keyboard scanning or MIDI traffic.
+The default `HUNTSMAN_USB_ONLY=ON` build uses `src/main_usb.c`; optical and lighting code
 is not linked or executed. It sends neutral keyboard reports and a CDC
 heartbeat, with MIDI endpoints and the updater HID interface present.
 See [the USB-only audit](docs/USB_ONLY_AUDIT.md) for the two reproduced
@@ -31,15 +35,15 @@ The USB-only image contains:
 | 4 | CDC ACM control | `0x83` interrupt IN |
 | 5 | CDC ACM data | `0x04` OUT, `0x84` IN |
 
-The descriptors specify `1532:02b0`; successful hardware enumeration of this
-revision has not been established. Interface 3 implements the Razer
+The device enumerates as `1532:02b0`. Interface 3 implements the Razer
 90-byte command frame and accepts channel 0 / opcode `0x04` / mode 1. It writes
 the bootloader's `0xaaaaaaaa` reset cookie at `0x2002fffc` and resets after a
 20 ms deferral starting only after EP0 IN status completion. A new SETUP or
 bus reset before that acknowledgment cancels entry. Those cases are tested
-offline; the physical update round trip remains unverified. Device-information queries
-used by `updater/` are also implemented. Flash erase/program/verify remains
-bootloader-owned.
+offline; application-to-bootloader entry and the full physical update round
+trip remain unverified. Device-information queries used by the supplied
+`../updater/` succeeded on hardware. Flash erase/program remains
+bootloader-owned; the trial checked program acknowledgments, not readback.
 
 ## Build
 
@@ -120,12 +124,13 @@ round trip has not been validated with this revision.
 
 ## Flashing safety
 
-No further device flashing, reset, or mode changes are authorized during the
-current audit. Manual recovery is expensive and must not be a test strategy.
+The authorized trial is complete. No further device flashing, reset, or mode
+changes are authorized. Manual recovery is expensive and must not be a test
+strategy.
 A successful build or offline USB test is not permission to flash.
 
-After the outstanding audit issues have been resolved and the user explicitly
-approves a hardware trial, use only the supplied `updater/` implementation and
-the exact reviewed application image. Do not program the application binary
+If the user explicitly approves another hardware trial after review, use only
+the supplied `../updater/` implementation and the exact reviewed application
+image. Do not program the application binary
 at address zero or overwrite the bootloader. Keep `../extracted_firmware`
 read-only; do not use the old broken implementation as a reference.
