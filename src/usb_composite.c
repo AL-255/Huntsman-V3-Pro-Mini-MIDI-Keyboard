@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "board.h"
+#include "fsl_common.h"
 #include "debug.h"
 #include "updater_protocol.h"
 #include "usb_descriptors.h"
@@ -10,6 +11,7 @@
 #include "usb_device_cdc_acm.h"
 #include "usb_device_config.h"
 #include "usb_device_hid.h"
+#include "usb_device_dci.h"
 
 #define USB_CONTROLLER_ID ((uint8_t)kUSB_ControllerLpcIp3511Hs0)
 #define USB_BUFFER __attribute__((section(".usb_sram"), aligned(64)))
@@ -21,7 +23,8 @@ static volatile bool s_midi_busy;
 static volatile bool s_cdc_busy;
 static volatile bool s_cdc_dte_present;
 static volatile bool s_bootloader_pending;
-static uint32_t s_bootloader_requested_at;
+static volatile bool s_bootloader_status_complete;
+static volatile uint32_t s_bootloader_requested_at;
 static usb_device_class_config_struct_t s_classConfig[3];
 
 USB_BUFFER static keyboard_report_t s_keyboard_report;
@@ -50,9 +53,11 @@ static usb_status_t keyboard_callback(class_handle_t handle, uint32_t event, voi
             return kStatus_USB_Success;
         case kUSB_DeviceHidEventSetIdle:
         case kUSB_DeviceHidEventGetIdle:
+            return kStatus_USB_Success;
         case kUSB_DeviceHidEventSetProtocol:
         case kUSB_DeviceHidEventGetProtocol:
-            return kStatus_USB_Success;
+            /* Report-only NKRO HID; no eight-byte boot protocol advertised. */
+            return kStatus_USB_InvalidRequest;
         default:
             return kStatus_USB_InvalidRequest;
     }
@@ -81,7 +86,7 @@ static usb_status_t updater_callback(class_handle_t handle, uint32_t event, void
                 if (action == kUpdaterEnterBootloader)
                 {
                     s_bootloader_pending = true;
-                    s_bootloader_requested_at = board_millis();
+                    s_bootloader_status_complete = false;
                 }
                 return (action == kUpdaterNoAction) ? kStatus_USB_InvalidRequest : kStatus_USB_Success;
             }
@@ -222,6 +227,7 @@ static usb_status_t device_callback(usb_device_handle handle, uint32_t event, vo
             s_attached = false;
             s_keyboard_busy = s_midi_busy = s_cdc_busy = false;
             s_cdc_dte_present = false;
+            s_bootloader_pending = s_bootloader_status_complete = false;
             usb_errata_bus_reset();
             if (USB_DeviceClassGetSpeed(USB_CONTROLLER_ID, &speed) == kStatus_USB_Success)
             {
@@ -250,7 +256,18 @@ static usb_status_t device_callback(usb_device_handle handle, uint32_t event, vo
             s_attached = false;
             s_cdc_dte_present = false;
             return kStatus_USB_Success;
+        case kUSB_DeviceEventGetConfiguration:
+            if (param == NULL)
+                return kStatus_USB_InvalidRequest;
+            *(uint8_t *)param = s_attached ? 1u : 0u;
+            return kStatus_USB_Success;
+        case kUSB_DeviceEventGetInterface:
         case kUSB_DeviceEventSetInterface:
+            if (param == NULL || !s_attached ||
+                (*(uint16_t *)param >> 8u) >= USB_IFACE_COUNT ||
+                (*(uint16_t *)param & 0xffu) != 0u)
+                return kStatus_USB_InvalidRequest;
+            /* Every exposed interface has only alternate setting zero. */
             return kStatus_USB_Success;
         default:
             return usb_descriptors_handle_event(event, param);
@@ -273,6 +290,31 @@ void USB1_IRQHandler(void)
 {
     USB_DeviceLpcIp3511IsrFunction(s_device);
     USBHSD->INTEN |= USBHSD_INTEN_FRAME_INT_EN_MASK;
+}
+
+usb_status_t __real_USB_DeviceNotificationTrigger(void *handle, void *message);
+
+usb_status_t __wrap_USB_DeviceNotificationTrigger(void *handle, void *message)
+{
+    const usb_device_callback_message_struct_t *event = message;
+    /* NXP IP3511 reports EP0 IN as code 0x80, not endpoint-list index 1.
+     * A completed zero-length IN after our SET_REPORT data is its status ACK.
+     * A new SETUP before that ACK aborts the old control transfer. */
+    const bool status_complete = event != NULL && event->code == 0x80u &&
+        event->isSetup == 0u && event->length == 0u && s_bootloader_pending &&
+        !s_bootloader_status_complete;
+    if (event != NULL && event->isSetup != 0u && !s_bootloader_status_complete)
+        s_bootloader_pending = false;
+    const usb_status_t result = __real_USB_DeviceNotificationTrigger(handle, message);
+    /* The vendor Chapter 9 callback leaves its return value InvalidRequest
+     * on a status-only completion. The controller completion notification,
+     * not that callback return, is the evidence that the ZLP was ACKed. */
+    if (status_complete && s_bootloader_pending)
+    {
+        s_bootloader_requested_at = board_millis();
+        s_bootloader_status_complete = true;
+    }
+    return result;
 }
 
 void usb_composite_init(void)
@@ -300,7 +342,8 @@ void usb_composite_init(void)
 
 void usb_composite_service(void)
 {
-    if (s_bootloader_pending && ((uint32_t)(board_millis() - s_bootloader_requested_at) >= 20u))
+    if (s_bootloader_pending && s_bootloader_status_complete &&
+        ((uint32_t)(board_millis() - s_bootloader_requested_at) >= 20u))
     {
         board_enter_bootloader();
     }
@@ -308,41 +351,59 @@ void usb_composite_service(void)
 
 bool usb_keyboard_send(const keyboard_report_t *report)
 {
+    const uint32_t irq = DisableGlobalIRQ();
     if (!s_attached || s_keyboard_busy)
     {
+        EnableGlobalIRQ(irq);
         return false;
     }
     memcpy(&s_keyboard_report, report, sizeof(s_keyboard_report));
-    s_keyboard_busy = USB_DeviceHidSend(s_classConfig[0].classHandle, USB_KEYBOARD_ENDPOINT,
+    s_keyboard_busy = true;
+    const bool submitted = USB_DeviceHidSend(s_classConfig[0].classHandle, USB_KEYBOARD_ENDPOINT,
                                         (uint8_t *)&s_keyboard_report,
                                         sizeof(s_keyboard_report)) == kStatus_USB_Success;
-    return s_keyboard_busy;
+    if (!submitted)
+        s_keyboard_busy = false;
+    EnableGlobalIRQ(irq);
+    return submitted;
 }
 
 bool usb_midi_send(uint8_t cable_and_cin, uint8_t status, uint8_t data1, uint8_t data2)
 {
+    const uint32_t irq = DisableGlobalIRQ();
     if (!s_attached || s_midi_busy)
     {
+        EnableGlobalIRQ(irq);
         return false;
     }
     s_midi_tx[0] = cable_and_cin;
     s_midi_tx[1] = status;
     s_midi_tx[2] = data1;
     s_midi_tx[3] = data2;
-    s_midi_busy = USB_DeviceSendRequest(s_device, USB_MIDI_ENDPOINT,
+    s_midi_busy = true;
+    const bool submitted = USB_DeviceSendRequest(s_device, USB_MIDI_ENDPOINT,
                                       s_midi_tx, sizeof(s_midi_tx)) == kStatus_USB_Success;
-    return s_midi_busy;
+    if (!submitted)
+        s_midi_busy = false;
+    EnableGlobalIRQ(irq);
+    return submitted;
 }
 
 bool usb_cdc_write(const uint8_t *data, uint32_t length)
 {
+    const uint32_t irq = DisableGlobalIRQ();
     if (!usb_cdc_ready() || s_cdc_busy)
     {
+        EnableGlobalIRQ(irq);
         return false;
     }
-    s_cdc_busy = USB_DeviceCdcAcmSend(s_classConfig[2].classHandle, USB_CDC_DATA_ENDPOINT,
+    s_cdc_busy = true;
+    const bool submitted = USB_DeviceCdcAcmSend(s_classConfig[2].classHandle, USB_CDC_DATA_ENDPOINT,
                                       (uint8_t *)data, length) == kStatus_USB_Success;
-    return s_cdc_busy;
+    if (!submitted)
+        s_cdc_busy = false;
+    EnableGlobalIRQ(irq);
+    return submitted;
 }
 
 bool usb_cdc_ready(void)

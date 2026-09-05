@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "usb_composite.h"
+#include "fsl_common.h"
 
 #define DEBUG_RING_SIZE 1024u
 #define DEBUG_USB_CHUNK   128u
@@ -10,7 +11,7 @@
 static uint8_t s_ring[DEBUG_RING_SIZE];
 static uint16_t s_head;
 static uint16_t s_tail;
-static bool s_sending;
+static volatile bool s_sending;
 
 void debug_init(void)
 {
@@ -65,8 +66,10 @@ void debug_usb_configured(void)
 void debug_service(void)
 {
     static uint8_t packet[DEBUG_USB_CHUNK];
+    const uint32_t irq = DisableGlobalIRQ();
     if (s_sending || !usb_cdc_ready() || (s_head == s_tail))
     {
+        EnableGlobalIRQ(irq);
         return;
     }
     uint32_t length = 0u;
@@ -75,12 +78,14 @@ void debug_service(void)
         packet[length++] = s_ring[s_tail];
         s_tail = (uint16_t)((s_tail + 1u) % DEBUG_RING_SIZE);
     }
-    s_sending = usb_cdc_write(packet, length);
-    if (!s_sending)
+    s_sending = true;
+    if (!usb_cdc_write(packet, length))
     {
+        s_sending = false;
         /* Keep the ring consistent on a transient busy return. */
         s_tail = (uint16_t)((s_tail + DEBUG_RING_SIZE - length) % DEBUG_RING_SIZE);
     }
+    EnableGlobalIRQ(irq);
 }
 
 /* Called by the USB CDC send-complete path. */

@@ -37,12 +37,9 @@ void board_init(void)
     CLOCK_EnableClock(kCLOCK_Iocon);
     CLOCK_EnableClock(kCLOCK_Gpio0);
 
-    /* The production keyboard supplies a 16 MHz crystal/clock to the USB PLL. */
-    POWER_DisablePD(kPDRUNCFG_PD_XTAL32M);
-    POWER_DisablePD(kPDRUNCFG_PD_LDOXO32M);
-    CLOCK_SetupExtClocking(BOARD_XTAL_CLOCK_HZ);
-    SYSCON->CLOCK_CTRL |= SYSCON_CLOCK_CTRL_CLKIN_ENA_MASK;
-    ANACTRL->XO32M_CTRL |= ANACTRL_XO32M_CTRL_ENABLE_SYSTEM_CLK_OUT_MASK;
+    /* Production's 96 MHz branch (0x20000620) uses FRO only. Do not borrow
+     * external-system-clock setup from its 100/150 MHz branches. USB's 16 MHz
+     * PHY reference is powered/configured by board_usb_clock_init below. */
 
     (void)SysTick_Config(BOARD_CORE_CLOCK_HZ / 1000u);
 }

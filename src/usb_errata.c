@@ -73,6 +73,10 @@ void usb_errata_init(void)
 
 void usb_errata_bus_reset(void)
 {
+    /* Actual instruction 0x20005ca2 reads INFO before the latch/speed tests.
+     * The decompiler moves this read and merges the two disconnect writes;
+     * neither transformation preserves the observable MMIO sequence. */
+    const uint32_t start_frame = USBHSD->INFO & USB_FRAME_NUMBER_MASK;
     if (s_connected_to_hs_host || s_connected_to_fs_host)
     {
         return;
@@ -83,7 +87,6 @@ void usb_errata_bus_reset(void)
         return;
     }
 
-    const uint32_t start_frame = USBHSD->INFO & USB_FRAME_NUMBER_MASK;
     bool full_speed = false;
 
     USBHSD->DEVCMDSTAT =
@@ -102,12 +105,17 @@ void usb_errata_bus_reset(void)
     }
 
     USBHSD->DEVCMDSTAT &= ~USB_W1C_AND_TEST_MASK;
-    USBHSD->DEVCMDSTAT &= ~USBHSD_DEVCMDSTAT_DCON_MASK;
+    USBHSD->DEVCMDSTAT &= USB_RECONNECT_MASK;
     timer_wait(1u);
+    /* Keep the individual volatile stores from 0x20005d46..0x20005d7a.
+     * In particular, acknowledge change bit 24 before reconnecting. The
+     * decompiled C incorrectly folds these observable writes together. */
+    if (full_speed)
+        USBHSD->DEVCMDSTAT |= USB_FORCE_FS_MASK;
+    USBHSD->DEVCMDSTAT = (USBHSD->DEVCMDSTAT & ~0x0f000000u) | 0x01000000u;
     USBHSD->DEVCMDSTAT =
         (USBHSD->DEVCMDSTAT & USB_RECONNECT_MASK) |
-        USB_RECONNECT_CHANGE |
-        (full_speed ? USB_FORCE_FS_MASK : 0u);
+        USB_RECONNECT_CHANGE;
     if (full_speed)
     {
         s_connected_to_fs_host = true;

@@ -1,5 +1,9 @@
 # Bring-up audit — 2026-09-04
 
+Historical checkpoint `c0a0bf1`. Current scope and subsequent corrections are
+in [USB_ONLY_AUDIT.md](USB_ONLY_AUDIT.md); off-chip work is deferred and excluded
+from the default USB-only image.
+
 ## Status and correction of approach
 
 This is a development checkpoint, not a release or permission to flash.

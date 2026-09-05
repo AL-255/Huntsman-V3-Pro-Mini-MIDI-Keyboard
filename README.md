@@ -4,19 +4,15 @@ An independent LPC5528 application for the Razer Huntsman V3 Pro Mini. It is
 designed for the keyboard's existing bootloader and the 128 KiB application
 image linked at `0x20000000`; the bootloader is neither included nor modified.
 
-Status: development checkpoint, **not ready to flash**. Earlier images failed
-USB enumeration. An instruction-level USB alignment defect has been reproduced
-offline and corrected, but optical and lighting startup still have known gaps.
-See [the bring-up audit](docs/BRINGUP_AUDIT.md) for evidence, corrections to
-earlier claims, test coverage, and the remaining flashing blockers.
+Current scope: **USB bring-up only**, not yet physically validated. The default
+`HUNTSMAN_USB_ONLY=ON` build uses `src/main_usb.c`; optical and lighting code
+is not linked or executed. It sends neutral keyboard reports and a CDC
+heartbeat, with MIDI endpoints and the updater HID interface present.
+See [the USB-only audit](docs/USB_ONLY_AUDIT.md) for the two reproduced
+alignment faults, production PHY comparison, tests, and remaining limits.
 
-The current implementation contains:
+The USB-only image contains:
 
-- optical-key scanning over Flexcomm 3 SPI at 8 MHz, including ASIC ready and
-  route/control GPIOs, response validation, 128-frame baseline settling, and
-  actuation/release hysteresis;
-- RGB output over Flexcomm 1 I2C at 400 kHz for the 64-LED primary controller
-  (`0x50`) and four-LED secondary controller (`0x6c`);
 - a six-interface USB 2.0 composite device using NXP's IP3511 HS device stack;
 - an NKRO HID keyboard, USB-MIDI 1.0 streaming endpoints, firmware-update HID
   feature transport at interface 3, and CDC ACM debug output;
@@ -39,8 +35,9 @@ The descriptors specify `1532:02b0`; successful hardware enumeration of this
 revision has not been established. Interface 3 implements the Razer
 90-byte command frame and accepts channel 0 / opcode `0x04` / mode 1. It writes
 the bootloader's `0xaaaaaaaa` reset cookie at `0x2002fffc` and resets after a
-20 ms deferral. Whether that deferral reliably follows host acknowledgment of
-the control status stage remains to be verified. Device-information queries
+20 ms deferral starting only after EP0 IN status completion. A new SETUP or
+bus reset before that acknowledgment cancels entry. Those cases are tested
+offline; the physical update round trip remains unverified. Device-information queries
 used by `updater/` are also implemented. Flash erase/program/verify remains
 bootloader-owned.
 
@@ -83,14 +80,19 @@ cmake --build --preset firmware --target audit-usb
 This executes the actual linked NXP DCI/IP3511/class code and application
 callbacks at both modeled USB speeds. It checks enumeration control transfers,
 NKRO, MIDI, CDC, updater information queries, and bus reset after transfers.
-USB SRAM accesses are checked for Device-memory alignment.
+USB SRAM accesses are checked for Device-memory alignment. Separate tests
+execute startup/core-clock/USB-clock/timer setup and the PHY chirp routine.
 
-It does **not** test electrical behavior, CPU startup, clocks, PHY negotiation,
-interrupt delivery, optical scanning, or lighting. Board clock/delay/IRQ/PHY
-recovery functions are stubbed. No build or test target flashes or resets a
-connected device.
+These are limited register models: they do **not** test electrical behavior,
+clock lock, PHY negotiation, or real interrupt delivery. The transport test
+stubs board initialization; the startup and chirp tests cover those paths
+separately under explicit model assumptions. No build or test target flashes
+or resets a connected device.
 
-## Hardware assumptions and calibration
+## Deferred full-application work (not part of USB bring-up)
+
+The following describes retained, incomplete code excluded by the default
+USB-only build. It is not being developed or used to block the USB-only audit.
 
 The peripheral pins, optical transactions, I2C addresses, boot cookie, memory
 layout, and updater framing are reconstructed from the supplied firmware and
@@ -104,8 +106,8 @@ should be treated as recovered production mapping.
 
 The current off-chip code also omits observed GPIO 8/26 transitions and the
 primary LED-enable table, and unconditionally accesses a secondary controller
-that production gates on ASIC profile 3. These must be resolved from the
-production instructions before considering another hardware trial.
+that production gates on ASIC profile 3. These must be resolved before
+re-enabling that code, not as part of the current USB-only work.
 
 Optical actuation defaults to 31.25% normalized travel and releases at 21.875%.
 The firmware waits for 128 complete valid scan frames before generating key

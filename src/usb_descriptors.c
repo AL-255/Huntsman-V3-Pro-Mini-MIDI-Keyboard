@@ -70,7 +70,7 @@ static uint8_t s_configuration_descriptor[] = {
     9u, USB_DESCRIPTOR_TYPE_CONFIGURE, 0xd2u, 0x00u, USB_IFACE_COUNT, 1u, 0u, 0xa0u, 250u,
 
     /* Interface 0: HID NKRO keyboard. */
-    9u, USB_DESCRIPTOR_TYPE_INTERFACE, USB_IFACE_KEYBOARD, 0u, 1u, 0x03u, 0x01u, 0x01u, 4u,
+    9u, USB_DESCRIPTOR_TYPE_INTERFACE, USB_IFACE_KEYBOARD, 0u, 1u, 0x03u, 0x00u, 0x00u, 4u,
     9u, USB_DESCRIPTOR_TYPE_HID, 0x11u, 0x01u, 0u, 1u, USB_DESCRIPTOR_TYPE_HID_REPORT,
     USB_U16_LO(sizeof(s_keyboard_report_descriptor)), USB_U16_HI(sizeof(s_keyboard_report_descriptor)),
     7u, USB_DESCRIPTOR_TYPE_ENDPOINT, USB_ENDPOINT_IN | USB_KEYBOARD_ENDPOINT, 0x03u,
@@ -146,7 +146,7 @@ static usb_device_interface_struct_t s_keyboardInterfacesAlt[] = {
     {0u, {1u, g_keyboardEndpoints}, NULL},
 };
 static usb_device_interfaces_struct_t s_keyboardInterfaces[] = {
-    {0x03u, 0x01u, 0x01u, USB_IFACE_KEYBOARD, s_keyboardInterfacesAlt, 1u},
+    {0x03u, 0x00u, 0x00u, USB_IFACE_KEYBOARD, s_keyboardInterfacesAlt, 1u},
 };
 static usb_device_interface_list_t s_keyboardInterfaceList[] = {
     {1u, s_keyboardInterfaces},

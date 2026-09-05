@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 option(HUNTSMAN_BUILD_FIRMWARE "Build the LPC5528 application image" OFF)
+option(HUNTSMAN_USB_ONLY "Build USB bring-up without optical or lighting initialization" ON)
 
 if(HUNTSMAN_BUILD_FIRMWARE)
     project(huntsman_v3_pro_mini_midi C ASM)
@@ -57,13 +58,16 @@ add_executable(huntsman_firmware
     ${NXP_ROOT}/component/lists/fsl_component_generic_list.c
     src/board.c
     src/debug.c
-    src/lighting.c
-    src/main.c
-    src/optical_hw.c
     src/usb_composite.c
     src/usb_descriptors.c
     src/usb_errata.c
+    src/usb_safe_memcpy.c
 )
+if(HUNTSMAN_USB_ONLY)
+    target_sources(huntsman_firmware PRIVATE src/main_usb.c)
+else()
+    target_sources(huntsman_firmware PRIVATE src/main.c src/lighting.c src/optical_hw.c)
+endif()
 target_link_libraries(huntsman_firmware PRIVATE huntsman_core)
 
 target_include_directories(huntsman_firmware PRIVATE
@@ -119,6 +123,10 @@ target_link_options(huntsman_firmware PRIVATE
     ${MCU_FLAGS}
     -nostartfiles
     -Wl,--gc-sections
+    # Observe EP0 status completion without modifying the vendor stack.
+    -Wl,--wrap=USB_DeviceNotificationTrigger
+    # Prebuilt newlib memcpy has unaligned halfword tails despite MCU_FLAGS.
+    -Wl,--wrap=memcpy
     -Wl,--print-memory-usage
     -Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/huntsman_firmware.map
     -T${CMAKE_CURRENT_SOURCE_DIR}/linker/lpc5528_application.ld
@@ -134,6 +142,12 @@ set_property(TARGET huntsman_firmware APPEND PROPERTY LINK_DEPENDS
 add_custom_target(audit-usb
     COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
             python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_usb_arm.py
+            $<TARGET_FILE:huntsman_firmware>
+    COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+            python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_usb_startup_arm.py
+            $<TARGET_FILE:huntsman_firmware>
+    COMMAND ${CMAKE_COMMAND} -E env PYTHONDONTWRITEBYTECODE=1
+            python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_usb_chirp_arm.py
             $<TARGET_FILE:huntsman_firmware>
     DEPENDS huntsman_firmware
     USES_TERMINAL

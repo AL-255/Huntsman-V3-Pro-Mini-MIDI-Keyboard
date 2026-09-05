@@ -14,6 +14,7 @@ from unicorn import Uc, UC_ARCH_ARM, UC_MODE_THUMB, UC_MODE_MCLASS
 from unicorn import UC_HOOK_CODE, UC_HOOK_MEM_READ, UC_HOOK_MEM_WRITE, UcError
 from unicorn.arm_const import UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2
 from unicorn.arm_const import UC_ARM_REG_R3, UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_PC
+from unicorn.arm_const import UC_CPU_ARM_CORTEX_M33
 
 
 USB = 0x40094000
@@ -24,6 +25,7 @@ RETURN = 0x2003F000
 class UsbArm:
     def __init__(self, elf_path):
         self.cpu = Uc(UC_ARCH_ARM, UC_MODE_THUMB | UC_MODE_MCLASS)
+        self.cpu.ctl_set_cpu_model(UC_CPU_ARM_CORTEX_M33)
         for address, size in ((0x04000000, 0x8000), (0x20000000, 0x40000),
                               (0x40000000, 0x110000), (0xE0000000, 0x100000)):
             self.cpu.mem_map(address, size)
@@ -36,10 +38,11 @@ class UsbArm:
             self.symbols = {s.name: s["st_value"] for s in entries}
             self.sizes = {s.name: s["st_size"] for s in entries}
         self.registers = {USB + 12: RAM}
+        self.reset_requests = 0
         self.trace = deque(maxlen=24)
         self.stubs = {self.symbols[name] & ~1 for name in
                       ("board_usb_clock_init", "usb_errata_init", "board_delay_ms",
-                       "board_usb_isr_enable", "usb_errata_bus_reset") if name in self.symbols}
+                       "board_usb_isr_enable", "usb_errata_bus_reset", "board_enter_bootloader") if name in self.symbols}
         self.cpu.hook_add(UC_HOOK_CODE, self.code)
         self.cpu.hook_add(UC_HOOK_MEM_READ, self.read_register, begin=USB, end=USB + 0xFFF)
         self.cpu.hook_add(UC_HOOK_MEM_WRITE, self.write_register, begin=USB, end=USB + 0xFFF)
@@ -61,6 +64,11 @@ class UsbArm:
 
     def code(self, cpu, address, size, _):
         self.trace.append(address)
+        if address == self.symbols["board_enter_bootloader"] & ~1:
+            self.reset_requests += 1  # record intent; never perform a reset here
+            # This function is noreturn: its caller has no return epilogue.
+            cpu.reg_write(UC_ARM_REG_PC, RETURN | 1)
+            return
         if address in self.stubs:
             cpu.reg_write(UC_ARM_REG_PC, cpu.reg_read(UC_ARM_REG_LR))
 
@@ -104,7 +112,7 @@ class UsbArm:
     def interrupt(self):
         handle = self.u32(self.symbols["s_device"])
         assert handle, "USB class initialization failed"
-        self.call("USB_DeviceLpcIp3511IsrFunction", handle)
+        self.call("USB1_IRQHandler")
 
     def reset(self, high_speed=False):
         self.registers[USB] = (self.registers[USB] & ~0x00C00000) | (0x00800000 if high_speed else 0x00400000) | 0x04000000
@@ -177,7 +185,18 @@ def main():
     parser.add_argument("elf")
     parser.add_argument("--expect-reset-alignment-fault", action="store_true",
                         help="negative control: require the previously flashed bus-reset fault")
+    parser.add_argument("--expect-libc-alignment-fault", action="store_true",
+                        help="negative control: require prebuilt memcpy's odd-tail halfword fault")
     args = parser.parse_args()
+    if args.expect_libc_alignment_fault:
+        dev = UsbArm(args.elf)
+        try:
+            dev.call("memcpy", RAM + 0x3400, 0x04005000, 43)
+        except RuntimeError as error:
+            assert "unaligned USB SRAM access at 40103429, size=2" in str(error), str(error)
+            print(f"PASS libc negative control: {error}")
+            return
+        raise AssertionError("expected memcpy alignment fault did not occur")
     if args.expect_reset_alignment_fault:
         dev = UsbArm(args.elf)
         dev.call("usb_composite_init")
@@ -208,6 +227,12 @@ def main():
             # merely because its header requests it would hide an over-read.
             assert len(response) == dev.sizes[f"s_string{index}"], (index, len(response))
         print("PASS string descriptor transfers and bounds")
+        assert config[15:17] == b"\x00\x00", "NKRO-only interface must not advertise boot protocol"
+        for interface, symbol in ((0, "s_keyboard_report_descriptor"),
+                                   (3, "s_updater_report_descriptor")):
+            report = dev.control_in(struct.pack("<BBHHH", 0x81, 6, 0x2200, interface, 255))
+            assert report == bytes(dev.cpu.mem_read(dev.symbols[symbol], dev.sizes[symbol]))
+        print("PASS keyboard/updater HID report descriptor requests")
         dev.control_out(bytes.fromhex("00 09 01 00 00 00 00 00"))
         # Enumeration succeeding does not prove that class endpoints opened.
         for index in (4, 8):  # MIDI OUT and CDC OUT must be receiving
@@ -215,6 +240,13 @@ def main():
             # NXP DCI ABI: callbacks begin at +20, stride 12 for this build.
             assert dev.u32(dev.u32(dev.symbols["s_device"]) + 20 + index * 12), (index, "missing endpoint callback")
         print("PASS SET_CONFIGURATION")
+        assert dev.control_in(bytes.fromhex("80 08 00 00 00 00 01 00")) == b"\x01"
+        for interface in range(6):
+            assert dev.control_in(struct.pack("<BBHHH", 0x81, 10, 0, interface, 1)) == b"\x00"
+            dev.control_out(struct.pack("<BBHHH", 0x01, 11, 0, interface, 0))
+        print("PASS GET_CONFIGURATION and all GET_INTERFACE/SET_INTERFACE(0)")
+        dev.control_out(bytes.fromhex("21 0a 00 00 00 00 00 00"))  # SET_IDLE(0)
+        assert dev.control_in(bytes.fromhex("a1 02 00 00 00 00 01 00")) == b"\x00"
         dev.complete(4, bytes.fromhex("09 90 3c 7f"))
         dev.packet(4)  # OUT rearmed by the installed callback
         assert dev.call("usb_midi_send", 9, 0x90, 60, 127)
@@ -261,6 +293,50 @@ def main():
         response = dev.control_in(bytes.fromhex("80 06 00 01 00 00 40 00"))
         assert len(response) == 18
         print("PASS reset after configured transfers")
+
+        for abort in ("setup", "reset", None):
+            boot = UsbArm(args.elf)
+            boot.call("usb_composite_init")
+            boot.reset(high_speed)
+            boot.control_out(bytes.fromhex("00 05 07 00 00 00 00 00"))
+            boot.control_out(bytes.fromhex("00 09 01 00 00 00 00 00"))
+            frame = bytearray(90)
+            frame[5], frame[7], frame[8] = 2, 4, 1  # updater enter_bootloader_report()
+            boot.setup(bytes.fromhex("21 09 00 03 03 00 5a 00"))
+            boot.complete(0, frame[:64])
+            boot.complete(0, frame[64:])
+            boot.put32(boot.symbols["s_milliseconds"], 1000)
+            boot.call("usb_composite_service")
+            assert boot.reset_requests == 0, "reset before status ACK"
+            if abort == "setup":
+                boot.control_in(bytes.fromhex("80 06 00 01 00 00 40 00"))
+            elif abort == "reset":
+                boot.reset(high_speed)
+            else:
+                boot.complete(1)  # status IN completes; start the deferral now
+                boot.put32(boot.symbols["s_milliseconds"], 1019)
+                boot.call("usb_composite_service")
+                assert boot.reset_requests == 0, "deferral shorter than 20 ms"
+                # A later request must not restart the already-ACKed deadline.
+                boot.control_out(bytes.fromhex("21 22 01 00 04 00 00 00"))
+            boot.put32(boot.symbols["s_milliseconds"], 1020)
+            boot.call("usb_composite_service")
+            assert boot.reset_requests == (1 if abort is None else 0), abort
+        print("PASS updater: no reset without status ACK, 20 ms post-ACK deferral, SETUP/reset aborts")
+
+    copies = UsbArm(args.elf)
+    for length in (0, 1, 2, 3, 4, 5, 7, 9, 15, 31, 43, 63, 64, 65, 90, 127, 128, 511, 512):
+        payload = bytes(i % 251 for i in range(length))
+        for source_offset in range(4):
+            for destination_offset in range(4):
+                # Both sides in Device memory: catches unaligned loads too.
+                source = RAM + 0x3000 + source_offset
+                destination = RAM + 0x3400 + destination_offset
+                copies.cpu.mem_write(source, payload)
+                copies.cpu.mem_write(destination - 1, b"\xa5" * (length + 2))
+                assert copies.call("__wrap_memcpy", destination, source, length) == destination
+                assert bytes(copies.cpu.mem_read(destination - 1, length + 2)) == b"\xa5" + payload + b"\xa5"
+    print("PASS Device-memory memcpy: all pointer alignments, odd tails, bounds, return value through 512 bytes")
 
 
 if __name__ == "__main__":
