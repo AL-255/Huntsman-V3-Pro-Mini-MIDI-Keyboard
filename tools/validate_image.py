@@ -9,11 +9,13 @@ from pathlib import Path
 
 APP_BASE = 0x20000000
 APP_SIZE = 0x20000
+CONFIG_OFFSET = 0x1FC00
+CONFIG_PAGE_SIZE = 0x200
 STACK_LIMIT = 0x04006000
 STACK_TOP = 0x04008000
 
 
-def elf_symbols_and_data(path: Path) -> dict[str, bytes]:
+def elf_symbols_and_data(path: Path, values: dict[str, int] | None = None) -> dict[str, bytes]:
     data = path.read_bytes()
     if data[:4] != b"\x7fELF" or data[4] != 1 or data[5] != 1:
         raise SystemExit("validator expects a little-endian ELF32 image")
@@ -34,14 +36,36 @@ def elf_symbols_and_data(path: Path) -> dict[str, bytes]:
         strings = data[string_section[4] : string_section[4] + string_section[5]]
         for pos in range(offset, offset + size, entry_size):
             name_offset, value, symbol_size, _info, _other, symbol_section = struct.unpack_from("<IIIBBH", data, pos)
-            if not name_offset or not symbol_size or symbol_section >= len(sections):
+            if not name_offset:
                 continue
             end = strings.find(b"\0", name_offset)
             name = strings[name_offset:end].decode("ascii", errors="replace")
+            if values is not None and symbol_section != 0:
+                values[name] = value
+            if not symbol_size or symbol_section >= len(sections):
+                continue
             owner = sections[symbol_section]
+            if owner[1] == 8:  # SHT_NOBITS has no initialized bytes in the file.
+                continue
             file_offset = owner[4] + value - owner[3]
             result[name] = data[file_offset : file_offset + symbol_size]
     return result
+
+
+def validate_config_reservation(image: bytes, values: dict[str, int]) -> None:
+    expected = {
+        "__app_config_start__": APP_BASE + CONFIG_OFFSET,
+        "__app_config_slot_a__": APP_BASE + CONFIG_OFFSET,
+        "__app_config_slot_b__": APP_BASE + CONFIG_OFFSET + CONFIG_PAGE_SIZE,
+        "__app_config_end__": APP_BASE + APP_SIZE,
+    }
+    if any(values.get(name) != address for name, address in expected.items()):
+        raise SystemExit("missing or invalid application configuration reservation")
+    load_end = values.get("__app_load_end__", 0)
+    if not APP_BASE < load_end <= APP_BASE + CONFIG_OFFSET:
+        raise SystemExit("application load image overlaps configuration reservation")
+    if len(image) != APP_SIZE or image[CONFIG_OFFSET:] != b"\xff" * (2 * CONFIG_PAGE_SIZE):
+        raise SystemExit("fresh updater image must initialize both configuration slots to FF")
 
 
 def validate_usb_descriptors(symbols: dict[str, bytes]) -> None:
@@ -106,13 +130,15 @@ def main() -> None:
     initial_sp, reset_vector = struct.unpack_from("<II", image)
     if initial_sp != STACK_TOP:
         raise SystemExit(f"initial MSP is {initial_sp:#010x}; expected {STACK_TOP:#010x}")
-    if not (APP_BASE <= (reset_vector & ~1) < APP_BASE + APP_SIZE) or not (reset_vector & 1):
+    if not (APP_BASE <= (reset_vector & ~1) < APP_BASE + CONFIG_OFFSET) or not (reset_vector & 1):
         raise SystemExit(f"reset vector {reset_vector:#010x} is outside the application or not Thumb")
     if STACK_LIMIT >= STACK_TOP:
         raise SystemExit("invalid stack bounds")
     if not args.elf.is_file():
         raise SystemExit("ELF is missing")
-    validate_usb_descriptors(elf_symbols_and_data(args.elf))
+    values: dict[str, int] = {}
+    validate_usb_descriptors(elf_symbols_and_data(args.elf, values))
+    validate_config_reservation(image, values)
     print(f"validated 128 KiB application: MSP={initial_sp:#010x}, reset={reset_vector:#010x}")
 
 

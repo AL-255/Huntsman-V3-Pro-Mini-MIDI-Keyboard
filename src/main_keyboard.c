@@ -5,8 +5,9 @@
 #include "keyboard_live.h"
 #include "usb_composite.h"
 
-/* ASIC GPIO/SPI untouched until explicit CDC 'scan start'; host keys require
- * a separate 'keys on'. TEST commands remain isolated from physical events. */
+/* Diagnostic presets require explicit CDC 'scan start'. The travel-lighting
+ * preset starts scanning after USB configuration. Host keys always require
+ * separate 'keys on'. TEST commands remain isolated from physical events. */
 static keyboard_console_t s_console;
 
 int main(void)

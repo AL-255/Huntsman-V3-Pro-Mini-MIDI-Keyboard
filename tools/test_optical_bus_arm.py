@@ -26,6 +26,8 @@ class ScanArm(StartupArm):
         self.mode = None
         self.requests = []
         self.reports = []
+        self.midi_packets = []
+        self.midi_blocked = False
         self.output = bytearray()
         self.dma_regs = {}
         self.no_completion = False
@@ -120,6 +122,10 @@ class ScanArm(StartupArm):
             self.call('debug_rx_service', self.symbols['s_console'])
             self.call('keyboard_live_service')
             self.call('debug_service')
+            if not self.midi_blocked and self.u32(self.packet_entry(5)) & 0x80000000:
+                address, length = self.packet(5)
+                self.midi_packets.append(bytes(self.cpu.mem_read(address, length)))
+                self.complete(5)
             if self.u32(self.packet_entry(3)) & 0x80000000:
                 address, length = self.packet(3)
                 self.reports.append(bytes(self.cpu.mem_read(address, length)))
@@ -152,10 +158,11 @@ def main():
     args = parser.parse_args()
     for profile in (1, 2, 3):
         dev = ScanArm(args.elf, args.reference, profile)
-        assert b'phase=0' in dev.command('status')
+        automatic = 's_lighting' in dev.symbols
+        assert (b'phase=1' if automatic else b'phase=0') in dev.command('status')
         assert not dev.requests
         assert b'not armed' in dev.command('keys on')
-        assert b'starting' in dev.command('scan start')
+        assert (b'already attempted' if automatic else b'starting') in dev.command('scan start')
         dev.service(350)
         assert dev.u32(SPI + 0x424) == 11  # 96 MHz / (11+1) = 8 MHz
         assert dev.u32(SPI + 0x400) & 0x35 == 0x15  # enable/master/CPHA1/CPOL0

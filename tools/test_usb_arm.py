@@ -101,6 +101,8 @@ class UsbArm:
         self.cpu.reg_write(UC_ARM_REG_LR, RETURN | 1)
         for reg, value in zip((UC_ARM_REG_R0, UC_ARM_REG_R1, UC_ARM_REG_R2, UC_ARM_REG_R3), args):
             self.cpu.reg_write(reg, value)
+        for index, value in enumerate(args[4:]):
+            self.put32(0x04007F00 + index * 4, value)
         try:
             self.cpu.emu_start(self.symbols[name] | 1, RETURN, count=2000000)
         except UcError as error:

@@ -1,145 +1,173 @@
-# Huntsman V3 Pro Mini MIDI firmware
+# Huntsman V3 Pro Mini MIDI Keyboard
 
-An independent LPC5528 application for the Razer Huntsman V3 Pro Mini. It is
-designed for the keyboard's existing bootloader and the 128 KiB application
-image linked at `0x20000000`; the bootloader is neither included nor modified.
+An independent LPC5528 application for the Razer Huntsman V3 Pro Mini, using
+the official NXP MCUXpresso USB and peripheral drivers. It retains the
+existing bootloader and computer-initiated application updater.
 
-Hardware checkpoint: **USB bring-up only**. A single authorized flash on 2026-09-05
-enumerated at high speed on Linux with keyboard, MIDI, and CDC drivers bound.
-CDC emitted six `USB service alive` messages during a six-second read, and
-the supplied updater's version/serial queries succeeded. This is a USB
-bring-up checkpoint, not validation of keyboard scanning or MIDI traffic.
-The default `HUNTSMAN_USB_ONLY=ON` build uses `src/main_usb.c`; optical and lighting code
-is not linked or executed. It sends neutral keyboard reports, with MIDI
-endpoints and the updater HID interface present. Periodic CDC heartbeats
-have been removed from both entry points in the current source.
-See [the USB-only audit](docs/USB_ONLY_AUDIT.md) for the two reproduced
-alignment faults, production PHY comparison, tests, and remaining limits.
+**Current firmware: `keyboard-midi`, flashed once with explicit authorization
+on 2026-09-05.** The application returned at USB high speed with keyboard, MIDI
+and CDC drivers bound. Offline MIDI/scan/GUI tests passed; physical playing,
+visible mode indicators and DAW aftertouch still require a player check.
+No build or test command below flashes hardware.
 
-The keyboard candidate adds the recovered optical scan/key engine and FN
-configuration editors. It was flashed once after explicit authorization;
-software bootloader entry, high-speed re-enumeration and live isolated CDC
-editor tests passed. Physical optical readbacks were subsequently tested with
-the streaming image below; physical key/editor behavior remains unvalidated.
-Build it with `keyboard-diagnostics`;
-the default USB-only preset remains separate. ASIC initialization and host
-keystrokes are explicitly CDC-gated. See [keyboard recovery and validation](docs/KEYBOARD_RECOVERY.md)
-for production handler addresses, commands, tests, and incomplete features.
+## Use the keyboard
 
-The latest revision streams whole-keyboard uint16 readbacks over CDC instead
-of periodic status text. It was flashed once with authorization; high-speed USB,
-CDC commands, and quiet idle output passed. A subsequent live CDC test started
-the scanner once and received complete 61-sensor frames at about **1.60 kHz**,
-with zero sequence gaps or invalid samples during the measured capture.
-**The requested 8 kHz is not achieved.** Scanning/streaming were left enabled
-for this running session; host keystrokes remain disabled. After a reboot,
-scanning still requires `scan start`.
-Use the separate `scan-stream`
-preset to preserve the flashed build artifacts. Binary framing, host decoding,
-8 kHz target and physical timing limits are in [CDC scan streaming](docs/SCAN_STREAM.md).
+On boot, the application starts in standard NKRO keyboard mode. Optical
+scanning and travel-reactive lighting start after USB configuration; the GUI
+is not required for keyboard or MIDI operation.
 
-The USB-only image contains:
+- Press below the per-key press threshold; release above its release threshold.
+  Defaults are **3600 / 3700**. Equality holds the current state.
+- Hold **Fn and press Enter** to toggle keyboard ↔ MIDI mode. Release all keys
+  after switching. The chord is consumed rather than sent as Enter.
+- A mode change produces two whole-keyboard color pulses: **green = keyboard,
+  blue = MIDI**. Enter retains a dim marker in that color. Other keys retain
+  their white, travel-proportional lighting.
+- In MIDI mode, **left Ctrl lowers the octave** and **left Alt raises it**.
+  These act once per press. Existing held notes keep their original pitch.
+- MIDI uses **channel 1**, Note On/Off, strike velocity and independent
+  **polyphonic key pressure (aftertouch)**. Ordinary HID typing is suppressed
+  in MIDI mode. Connect the keyboard's MIDI input to a software instrument
+  that accepts channel 1 and polyphonic aftertouch.
+- Unmapped keys are silent in MIDI mode. Fn and the two octave controls are
+  reserved; Enter may be mapped but still participates in the mode chord.
 
-- a six-interface USB 2.0 composite device using NXP's IP3511 HS device stack;
-- an NKRO HID keyboard, USB-MIDI 1.0 streaming endpoints, firmware-update HID
-  feature transport at interface 3, and CDC ACM debug output;
-- host-side tests for scan processing, NKRO packing, and updater framing,
-  post-link validation of the image and USB descriptors, and offline execution
-  tests of the compiled ARM USB stack.
+MIDI note names in this project use **C0 = note 12; C4 = note 60**. Some music
+applications display different octave labels for the same MIDI number.
+The requested octave jumps in the default mapping are intentional:
 
-## USB layout
+| Keyboard | MIDI note | Number | Keyboard | MIDI note | Number |
+| --- | --- | ---: | --- | --- | ---: |
+| Tab | C0 | 12 | 1 | C#0 | 13 |
+| Q | D0 | 14 | 2 | Eb0 | 15 |
+| W | E0 | 16 | 4 | F#0 | 18 |
+| E | F0 | 17 | 5 | Ab1 | 32 |
+| R | G0 | 19 | 6 | Bb1 | 34 |
+| T | A1 | 33 | 8 | C#1 | 25 |
+| Y | B1 | 35 | 9 | Eb1 | 27 |
+| U | C1 | 24 | - | F#1 | 30 |
+| I | D1 | 26 | = | Ab2 | 44 |
+| O | E1 | 28 | Backspace | Bb2 | 46 |
+| P | F1 | 29 | left Ctrl | octave − | — |
+| [ | G1 | 31 | left Alt | octave + | — |
+| ] | A2 | 45 | | | |
+| Backslash | B2 | 47 | | | |
 
-| Interface | Function | Endpoints |
-| --- | --- | --- |
-| 0 | HID NKRO keyboard | `0x81` interrupt IN |
-| 1 | MIDI Audio Control | none |
-| 2 | MIDI Streaming | `0x02` OUT, `0x82` IN |
-| 3 | 90-byte updater HID feature report | control endpoint only |
-| 4 | CDC ACM control | `0x83` interrupt IN |
-| 5 | CDC ACM data | `0x04` OUT, `0x84` IN |
+## Configuration GUI
 
-The device enumerates as `1532:02b0`. Interface 3 implements the Razer
-90-byte command frame and accepts channel 0 / opcode `0x04` / mode 1. It writes
-the bootloader's `0xaaaaaaaa` reset cookie at `0x2002fffc` and resets after a
-20 ms deferral starting only after EP0 IN status completion. A new SETUP or
-bus reset before that acknowledgment cancels entry. Those cases are tested
-offline; software entry from the USB-only checkpoint and the application-only
-update to the keyboard candidate subsequently passed on hardware.
-Device-information queries used by the supplied
-`../updater/` succeeded on hardware. Flash erase/program remains
-bootloader-owned; the trial checked program acknowledgments, not readback.
-
-## Build
-
-The source snapshots are from the official MCUXpresso Installer 26.06.123
-catalog. The expected Arm GNU toolchain is 14.2.1, matching the catalog entry.
-CMake and Ninja are also required.
+On Linux, with Python 3 and Tk installed:
 
 ```sh
-# Native logic tests
+python3 tools/keyboard_gui.py --device /dev/ttyACM0
+# Offline preview; never opens the keyboard:
+python3 tools/keyboard_gui.py --demo
+```
+
+Click **Connect**, then click a key on the physical ANSI layout. The GUI shows
+live raw samples, down/up state, firmware-calculated velocity, current mode,
+octave and device-confirmed settings.
+
+- Set the selected key's press/release pair, then **Apply to selected key**.
+- **Apply thresholds to all keys** changes every pair atomically on the MCU.
+- Choose a note name, MIDI number 0–127, or **Off**, then **Apply MIDI mapping**.
+  The key captions display the confirmed mapping; Fn/left Ctrl/left Alt are
+  reserved controls. Note mappings can be edited in either performance mode.
+- **Save profile…** exports confirmed thresholds and MIDI mappings to host JSON.
+  **Load + apply profile…** disables output, applies and checks each setting,
+  then restores the prior enable state. Older threshold-only JSON still loads.
+- Enable/disable controls govern both keyboard and MIDI output; raw monitoring
+  and velocity calculations continue. Configuration edits release output and
+  require a fresh neutral frame before input resumes.
+
+**Settings are RAM-only. Saving to device flash is not implemented.** A 1 KiB
+area is reserved inside our application image, but physical flash mapping and
+bootloader integrity checks remain unresolved. Stock settings, macros,
+calibration and factory data are untouched. A reboot restores our defaults.
+See [storage status](docs/DEVICE_CONFIG_STORAGE.md).
+
+Close other serial monitors before connecting; only one tool should own CDC.
+Use your system's serial-port permissions rather than running the GUI as root.
+The graphical layout currently supports ANSI/61 keys; firmware scan/MIDI logic
+also handles the recovered ISO/62 and JIS/65 layouts.
+
+## Build from scratch
+
+Requirements: Arm GNU bare-metal tools (`arm-none-eabi-gcc`, tested **14.2.1**),
+CMake **3.21+**, Ninja, a native C compiler, Python **3.10+**, and Tk for the GUI.
+NXP sources are already vendored at pinned official SDK revisions; no updater
+EXE, original firmware, SDK installation or network download is needed to
+compile the application.
+
+```sh
+git clone git@github.com:AL-255/Huntsman-V3-Pro-Mini-MIDI-Keyboard.git
+cd Huntsman-V3-Pro-Mini-MIDI-Keyboard
+
 cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 
-# LPC5528 application
-cmake --preset firmware
-cmake --build --preset firmware
+cmake --preset keyboard-midi
+cmake --build --preset keyboard-midi
 ```
 
-Outputs are written to `build-firmware/`:
+Outputs in `build-keyboard-midi/`: `huntsman_firmware.elf`, `.hex` and
+`.bin`. The binary is exactly **131072 bytes**. The linker and post-build
+validator enforce application/config boundaries, vectors and USB descriptors.
 
-- `huntsman_firmware.elf` — symbols and debug information;
-- `huntsman_firmware.hex` — addressed Intel HEX;
-- `huntsman_firmware.bin` — exactly 131072 bytes for the updater.
+**Use `keyboard-midi`, not `firmware`, for the complete application.**
+The historical `firmware` preset is intentionally USB-only.
+See [clean builds, dependencies and testing](docs/BUILDING.md).
 
-The post-build validator rejects an incorrect image length, stack/reset
-vector, VID/PID, interface ordering, endpoint layout, NKRO report, or updater
-feature-report size.
-
-## Offline ARM USB audit
+## Scan/debug tools
 
 ```sh
-python3 -m venv .venv-audit
-. .venv-audit/bin/activate
-python3 -m pip install -r tools/requirements-audit.txt
-cmake --build --preset firmware --target audit-usb
+# Twenty post-trigger samples, five-point velocity estimate, then exit:
+python3 -u tools/decode_scan_stream.py /dev/ttyACM0 --last-key --threshold 3600
+# Rearm above the threshold and capture again until Ctrl+C:
+python3 -u tools/decode_scan_stream.py /dev/ttyACM0 --last-key --threshold 3600 --repeat
+# See numeric and compact ANSI visualization options:
+python3 tools/decode_scan_stream.py --help
 ```
 
-This executes the actual linked NXP DCI/IP3511/class code and application
-callbacks at both modeled USB speeds. It checks enumeration control transfers,
-NKRO, MIDI, CDC, updater information queries, and bus reset after transfers.
-USB SRAM accesses are checked for Device-memory alignment. Separate tests
-execute startup/core-clock/USB-clock/timer setup and the PHY chirp routine.
+The raw stream and compact capture modes are documented in
+[scan streaming](docs/SCAN_STREAM.md) and [last-key capture](docs/LAST_KEY_STREAM.md).
+Selecting a CDC display does not select keyboard/MIDI performance mode.
 
-These are limited register models: they do **not** test electrical behavior,
-clock lock, PHY negotiation, or real interrupt delivery. The transport test
-stubs board initialization; the startup and chirp tests cover those paths
-separately under explicit model assumptions. No build or test target flashes
-or resets a connected device.
+## Design and validation
 
-## Retained legacy peripheral code
+- [MIDI state machine, encoding, timing, safety and tradeoffs](docs/MIDI_DESIGN.md)
+- [HKG4 telemetry, command acknowledgments and profile format](docs/MIDI_PROTOCOL.md)
+- [Build and test instructions](docs/BUILDING.md)
+- [Optical/keyboard recovery](docs/KEYBOARD_RECOVERY.md)
+- [Travel lighting and calibration limitations](docs/TRAVEL_LIGHTING.md)
+- [Independent velocity registration](docs/KEY_VELOCITY.md) and
+  [firmware normalization](docs/NORMALIZED_VELOCITY.md)
+- [Earlier hardware checkpoints](docs/HARDWARE_HISTORY.md)
+- [SDK source origins and licenses](third_party/ORIGINS.md)
 
-`src/main.c`, `src/optical_hw.c`, `src/optical_scan.c`, and `src/lighting.c`
-retain an incomplete earlier reconstruction. Neither the USB-only nor the
-keyboard-diagnostics entry point uses that peripheral path. Its guessed
-calibration and lighting order must not be treated as production evidence.
-The new keyboard path uses the recovered 61/62/65-sensor maps and replaces
-the provisional mapping formerly in `src/keyboard.c`.
+Velocity assumes **8000 scans/s**, as requested; this is not proof of an actual
+8 kHz hardware readback rate. An earlier full-stream hardware measurement was
+about 1.60 kHz. Five actual subsequent samples are always used, so real elapsed
+latency and the velocity scale depend on the actual scan cadence. Aftertouch
+is normalized optical travel, not a calibrated force measurement.
 
-The secondary controller's own 37408-byte firmware update protocol is not
-implemented in this application. The main-MCU update path is implemented: a
-computer-initiated entry command is implemented but its complete hardware
-round trip has not been validated with this revision.
+Offline tests exercise C logic, Tk with a simulated CDC device, and the linked
+ARM USB/scan/lighting paths with synthetic hardware replies. They do not prove
+electrical behavior, physical LED colors, real-time throughput, DAW integration
+or complete hardware recovery. See [the MIDI validation record](docs/MIDI_VALIDATION.md)
+for the exact flashed hash and the limited live checks.
 
-## Flashing safety
+## Updating and safety
 
-The authorized trial is complete. No further device flashing, reset, or mode
-changes are authorized. Manual recovery is expensive and must not be a test
-strategy.
-A successful build or offline USB test is not permission to flash.
+The USB composite device exposes NKRO HID, USB-MIDI, CDC ACM and the existing
+90-byte updater HID interface (VID:PID `1532:02b0`). Use the supplied
+`../updater/` application-only implementation for an explicitly authorized
+hardware update. Do not use a generic programmer at address zero or treat the
+RAM execution address `0x20000000` as a physical flash address.
 
-If the user explicitly approves another hardware trial after review, use only
-the supplied `../updater/` implementation and the exact reviewed application
-image. Do not program the application binary
-at address zero or overwrite the bootloader. Keep `../extracted_firmware`
-read-only; do not use the old broken implementation as a reference.
+Do not modify the bootloader, stock configuration/factory regions or secondary
+optical-controller firmware. Manual bootloader recovery is expensive and is
+not a test strategy. The original extraction remains read-only and is not
+distributed in this repository; historical address references in design notes
+are evidence, not flash-write targets. Application code is GPL-2.0; vendored
+SDK files retain their upstream licenses.

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Decode HKS1 CDC binary capture from stdin or a file; no device commands.
+"""Decode CDC binary capture from stdin, a file, or a device.
 
 Default output: sequence,tick,dropped,flags,raw0,... (fixed-width decimal).
 Use --live for a latest-only serial display (20 lines/s by default), --hex
 for hexadecimal readbacks, --bars for labelled in-place colored blocks,
-or --summary for capture rates. No device commands.
+or --summary for capture rates. --last-key requests compact device streaming
+on a tty, identifies the triggering key, prints its next 20 readbacks plus
+a first-five-point velocity estimate assuming 8 kHz, and exits. Add --repeat
+to re-arm after release and capture again until Ctrl-C.
 """
 import argparse
 import os
@@ -125,7 +128,7 @@ def live_display(stream, emit, rate=20., duration=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('capture', nargs='?', default='-')
+    parser.add_argument('capture', nargs='?', help='device or capture file; default /dev/ttyACM0 for --last-key, stdin otherwise; - explicitly reads stdin')
     parser.add_argument('--hex', action='store_true')
     parser.add_argument('--summary', action='store_true')
     parser.add_argument('--live', action='store_true', help='drain continuously; display newest received report only')
@@ -133,8 +136,64 @@ def main():
     parser.add_argument('--start', type=int, default=0, help='first raw sensor index in bar viewport (default 0)')
     parser.add_argument('--rate', type=float, default=20., help='maximum live display lines/s (default 20)')
     parser.add_argument('--duration', type=float, help='stop live display after this many seconds')
+    parser.add_argument('--last-key', action='store_true', help='identify triggering key, print next 20 readbacks and first-five-point velocity at assumed 8 kHz; fail on loss')
+    parser.add_argument('--repeat', action='store_true', help='with --last-key, re-arm when the captured key rises above threshold; repeat until Ctrl-C')
+    parser.add_argument('--layout', choices=('ansi','iso','jis'), default='ansi', help='last-key label mapping (default ansi, matching this keyboard)')
+    parser.add_argument('--threshold', type=int, default=3800, help='last-key press when raw drops strictly below this value (default 3800)')
+    parser.add_argument('--buffer-frames', type=int, default=8192, help='last-key pending output limit; overflow is fatal (default 8192)')
+    parser.add_argument('--timeout', type=float, default=5., help='last-key complete-report timeout in seconds (default 5)')
     args = parser.parse_args()
+    if args.capture is None:
+        args.capture = '/dev/ttyACM0' if args.last_key else '-'
     args.live = args.live or args.bars
+    if args.last_key:
+        if args.live or args.hex or args.summary or args.start or args.duration is not None or args.rate != 20.:
+            parser.error('--last-key cannot be combined with display, rate or duration options')
+        if not 1 <= args.threshold <= 4096 or not 1 <= args.buffer_frames <= 1048576:
+            parser.error('threshold must be 1..4096; buffer-frames must be 1..1048576')
+        if not 0 < args.timeout < float('inf'):
+            parser.error('--timeout must be finite and positive')
+        if args.capture == '-' and os.isatty(sys.stdin.fileno()):
+            parser.error('--last-key cannot use an interactive terminal as stdin; specify the CDC device or pipe an HKL1 capture')
+        from last_key_stream import receive
+        from scan_bars import sensor_labels
+        labels = sensor_labels()[{'ansi':61, 'iso':62, 'jis':65}[args.layout]]
+        import termios
+        import tty
+        # Open the tty bidirectionally for the mode command, but allow captured
+        # HKL1 files/stdin to be replayed read-only without sending commands.
+        stream = sys.stdin.buffer if args.capture == '-' else open(args.capture, 'rb', buffering=0)
+        owned = args.capture != '-'
+        if os.isatty(stream.fileno()):
+            path = os.ttyname(stream.fileno())
+            if owned: stream.close()
+            stream = open(path, 'r+b', buffering=0)
+            owned = True
+        fd = stream.fileno()
+        original = termios.tcgetattr(fd) if os.isatty(fd) else None
+        session = None
+        try:
+            print(f'Capture Armed: input={args.capture}; trigger=raw<{args.threshold}; '
+                  f'layout={args.layout}; next=20 (excluding trigger); '
+                  f'report_timeout={args.timeout:g}s; velocity_fit=5@8000Hz (assumed); '
+                  f'repeat={"on" if args.repeat else "off"}; awaiting stream', flush=True)
+            if original is not None:
+                import secrets
+                session = secrets.randbits(32)
+                tty.setraw(fd, termios.TCSANOW)  # never flush/discard tty input
+                command = f'\nstream key {args.threshold} {session}\n'.encode('ascii')
+                while command:
+                    command = command[os.write(fd, command):]
+            receive(fd, sys.stdout.fileno(), args.threshold, args.buffer_frames, args.timeout, session,
+                    sample_count=20, labels=labels, repeat=args.repeat)
+        finally:
+            try:
+                if original is not None: termios.tcsetattr(fd, termios.TCSANOW, original)
+            finally:
+                if owned: stream.close()
+        return
+    if args.threshold != 3800 or args.buffer_frames != 8192 or args.timeout != 5. or args.layout != 'ansi' or args.repeat:
+        parser.error('--threshold, --buffer-frames, --timeout, --layout and --repeat require --last-key')
     if args.bars and args.hex:
         parser.error('--bars and --hex are mutually exclusive')
     if not 0 <= args.start <= 64:
@@ -195,7 +254,12 @@ def main():
 
 
 if __name__ == '__main__':
+    from last_key_stream import StreamError
     try:
         main()
+    except (StreamError, OSError) as error:
+        print(f'ERROR: {error}', file=sys.stderr)
+        sys.exit(1)
     except KeyboardInterrupt:
-        pass
+        if '--last-key' in sys.argv:
+            sys.exit(130)

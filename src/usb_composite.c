@@ -422,6 +422,8 @@ bool usb_cdc_ready(void)
     return s_attached && s_cdc_dte_present;
 }
 
+bool usb_composite_ready(void) { return s_attached; }
+
 usb_device_handle usb_composite_device_handle(void)
 {
     return s_device;

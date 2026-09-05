@@ -35,13 +35,64 @@
       "inherits": "keyboard-diagnostics",
       "displayName": "Whole-keyboard CDC raw stream (no automatic flash)",
       "binaryDir": "${sourceDir}/build-stream"
+    },
+    {
+      "name": "travel-lighting",
+      "inherits": "scan-stream",
+      "displayName": "Automatic optical travel lighting (no automatic flash)",
+      "binaryDir": "${sourceDir}/build-lighting",
+      "cacheVariables": { "HUNTSMAN_TRAVEL_LIGHTING": "ON" }
+    },
+    {
+      "name": "last-key",
+      "inherits": "travel-lighting",
+      "displayName": "Compact loss-detecting last-key CDC (no automatic flash)",
+      "binaryDir": "${sourceDir}/build-last-key"
+    },
+    {
+      "name": "keyboard-gui",
+      "inherits": "last-key",
+      "displayName": "Standalone Schmitt keyboard and GUI configuration (no automatic flash)",
+      "binaryDir": "${sourceDir}/build-keyboard-gui",
+      "cacheVariables": { "HUNTSMAN_KEYBOARD_MODE": "ON" }
+    },
+    {
+      "name": "keyboard-velocity",
+      "inherits": "keyboard-gui",
+      "displayName": "Per-key on-device velocity and atomic all-key thresholds (no automatic flash)",
+      "binaryDir": "${sourceDir}/build-keyboard-velocity"
+    },
+    {
+      "name": "keyboard-velocity-float",
+      "inherits": "keyboard-velocity",
+      "displayName": "Firmware-normalized float velocity (no automatic flash)",
+      "binaryDir": "${sourceDir}/build-keyboard-velocity-float"
+    },
+    {
+      "name": "keyboard-storage-layout",
+      "inherits": "keyboard-velocity-float",
+      "displayName": "Application config reservation only (flash writes disabled)",
+      "binaryDir": "${sourceDir}/build-keyboard-storage-layout"
+    },
+    {
+      "name": "keyboard-midi",
+      "inherits": "keyboard-storage-layout",
+      "displayName": "Keyboard/MIDI modes, velocity, poly aftertouch, GUI mapping (no automatic flash)",
+      "binaryDir": "${sourceDir}/build-keyboard-midi"
     }
   ],
   "buildPresets": [
     { "name": "host-tests", "configurePreset": "host-tests" },
     { "name": "firmware", "configurePreset": "firmware" },
     { "name": "keyboard-diagnostics", "configurePreset": "keyboard-diagnostics" },
-    { "name": "scan-stream", "configurePreset": "scan-stream" }
+    { "name": "scan-stream", "configurePreset": "scan-stream" },
+    { "name": "travel-lighting", "configurePreset": "travel-lighting" },
+    { "name": "last-key", "configurePreset": "last-key" },
+    { "name": "keyboard-gui", "configurePreset": "keyboard-gui" },
+    { "name": "keyboard-velocity", "configurePreset": "keyboard-velocity" },
+    { "name": "keyboard-velocity-float", "configurePreset": "keyboard-velocity-float" },
+    { "name": "keyboard-storage-layout", "configurePreset": "keyboard-storage-layout" },
+    { "name": "keyboard-midi", "configurePreset": "keyboard-midi" }
   ],
   "testPresets": [
     {

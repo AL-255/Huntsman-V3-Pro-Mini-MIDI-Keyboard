@@ -79,6 +79,10 @@ Non-A0 markers and the two production startup-discard frames are not samples.
 
 ## Decode and inspect
 
+For device-side selection and loss-detecting single-number output, see
+[last-key streaming](LAST_KEY_STREAM.md). It requires the newer `last-key`
+firmware; unlike the whole-keyboard display modes, it fails on data loss.
+
 Capture CDC in raw mode to a binary file with a serial client. Avoid terminal
 echo and newline transformations; drain/resynchronize on opening. Then:
 
