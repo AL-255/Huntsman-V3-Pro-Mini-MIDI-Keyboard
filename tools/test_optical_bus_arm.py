@@ -45,6 +45,7 @@ class ScanArm(StartupArm):
         self.control_out(bytes.fromhex('00 05 07 00 00 00 00 00'))
         self.control_out(bytes.fromhex('00 09 01 00 00 00 00 00'))
         self.control_out(bytes.fromhex('21 22 01 00 04 00 00 00'))
+        self.command('stream off') # These tests exercise human-readable command replies.
 
     def dma_read(self, cpu, access, address, size, value, _):
         self.put32(address, self.dma_regs.get(address, 0))

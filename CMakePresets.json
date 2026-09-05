@@ -29,12 +29,19 @@
       "cacheVariables": {
         "HUNTSMAN_KEYBOARD_DIAGNOSTICS": "ON"
       }
+    },
+    {
+      "name": "scan-stream",
+      "inherits": "keyboard-diagnostics",
+      "displayName": "Whole-keyboard CDC raw stream (no automatic flash)",
+      "binaryDir": "${sourceDir}/build-stream"
     }
   ],
   "buildPresets": [
     { "name": "host-tests", "configurePreset": "host-tests" },
     { "name": "firmware", "configurePreset": "firmware" },
-    { "name": "keyboard-diagnostics", "configurePreset": "keyboard-diagnostics" }
+    { "name": "keyboard-diagnostics", "configurePreset": "keyboard-diagnostics" },
+    { "name": "scan-stream", "configurePreset": "scan-stream" }
   ],
   "testPresets": [
     {

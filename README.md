@@ -10,8 +10,9 @@ CDC emitted six `USB service alive` messages during a six-second read, and
 the supplied updater's version/serial queries succeeded. This is a USB
 bring-up checkpoint, not validation of keyboard scanning or MIDI traffic.
 The default `HUNTSMAN_USB_ONLY=ON` build uses `src/main_usb.c`; optical and lighting code
-is not linked or executed. It sends neutral keyboard reports and a CDC
-heartbeat, with MIDI endpoints and the updater HID interface present.
+is not linked or executed. It sends neutral keyboard reports, with MIDI
+endpoints and the updater HID interface present. Periodic CDC heartbeats
+have been removed from both entry points in the current source.
 See [the USB-only audit](docs/USB_ONLY_AUDIT.md) for the two reproduced
 alignment faults, production PHY comparison, tests, and remaining limits.
 
@@ -23,6 +24,11 @@ Build it with `keyboard-diagnostics`;
 the default USB-only preset remains separate. ASIC initialization and host
 keystrokes are explicitly CDC-gated. See [keyboard recovery and validation](docs/KEYBOARD_RECOVERY.md)
 for production handler addresses, commands, tests, and incomplete features.
+
+The latest, not-yet-flashed revision streams whole-keyboard uint16 readbacks
+over CDC instead of periodic status text. Use the separate `scan-stream`
+preset to preserve the flashed build artifacts. Binary framing, host decoding,
+8 kHz target and physical timing limits are in [CDC scan streaming](docs/SCAN_STREAM.md).
 
 The USB-only image contains:
 

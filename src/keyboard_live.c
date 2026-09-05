@@ -6,6 +6,7 @@
 #include "optical_bus.h"
 #include "optical_transport.h"
 #include "usb_composite.h"
+#include "scan_stream.h"
 #include <string.h>
 
 static optical_transport_t s_transport;
@@ -14,6 +15,7 @@ static keyboard_report_t s_sent;
 static bool s_host_keys, s_trace, s_sent_valid;
 static volatile bool s_usb_reset;
 static uint32_t s_last_frame, s_last_report;
+static bool s_stream_requested;
 
 static void value(const char *label, uint32_t n)
 {
@@ -40,6 +42,7 @@ static void scan_status(void)
     value(" frames=", s_transport.frames); value(" markers=", s_transport.markers);
     value(" errors=", s_transport.errors); value(" settled=", s_scan.ready);
     value(" valid=", s_scan.valid); value(" calibrated=", s_scan.calibrated);
+    value(" stream_dropped=", scan_stream_dropped());
     if (s_transport.fault) { debug_write(" fault="); debug_write(s_transport.fault); }
     debug_write("\r\n");
 }
@@ -63,10 +66,12 @@ void keyboard_live_init(void)
 {
     optical_transport_init(&s_transport);
     keyboard_scan_init(&s_scan, 0u);
+    scan_stream_init();
+    s_stream_requested = true;
     release_host();
 }
 
-void keyboard_live_usb_reset(void) { s_usb_reset = true; }
+void keyboard_live_usb_reset(void) { s_usb_reset = true; scan_stream_usb_reset(); }
 
 void keyboard_live_service(void)
 {
@@ -77,6 +82,11 @@ void keyboard_live_service(void)
     if (optical_transport_service(&s_transport, now, optical_bus_ticks()))
     {
         s_last_frame = now;
+        if (s_stream_requested)
+        {
+            scan_stream_start();
+            scan_stream_push(s_transport.samples, s_transport.count, s_transport.profile, optical_bus_ticks());
+        }
         if (!s_scan.count) keyboard_scan_init(&s_scan, s_transport.profile);
         keyboard_scan_frame(&s_scan, s_transport.samples, s_transport.tables[4], s_transport.tables[6], event);
     }
@@ -114,11 +124,14 @@ bool keyboard_live_command(const char *line)
     if (!strcmp(line, "help"))
     {
         debug_write("scan start | scan stop | scan status | scan sample XX (raw index hex)\r\n"
+                    "stream on | stream off (HKS1 binary uint16 scan frames; default on when scanning)\r\n"
                     "keys on | keys off | keys status | trace on | trace off\r\n"
                     "Scan starts OFF; one attempt per boot. keys on requires neutral valid samples.\r\n");
         return false; /* also print isolated TEST help */
     }
-    if (!strcmp(line, "status") || !strcmp(line, "scan status")) scan_status();
+    if (!strcmp(line, "stream on")) s_stream_requested = true;
+    else if (!strcmp(line, "stream off")) { s_stream_requested = false; scan_stream_stop(); }
+    else if (!strcmp(line, "status") || !strcmp(line, "scan status")) scan_status();
     else if (!strcmp(line, "scan start"))
     {
         debug_write(optical_transport_start(&s_transport, board_millis()) ?
@@ -126,6 +139,7 @@ bool keyboard_live_command(const char *line)
     }
     else if (!strcmp(line, "scan stop"))
     {
+        s_stream_requested = false; scan_stream_stop();
         release_host(); optical_transport_stop(&s_transport); scan_status();
     }
     else if (!strcmp(line, "keys status")) config_status();

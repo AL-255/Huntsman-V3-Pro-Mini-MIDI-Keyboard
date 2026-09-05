@@ -26,7 +26,6 @@ int main(void)
         if ((uint32_t)(now - last_heartbeat) >= 1000u)
         {
             last_heartbeat = now;
-            debug_write("USB service alive\r\n");
             (void)usb_keyboard_send(&neutral);
         }
         __WFI();

@@ -19,7 +19,6 @@ int main(void)
     s_console.command = keyboard_live_command;
     usb_composite_init();
     debug_write("OpenHuntsman keyboard diagnostics; type help\r\n");
-    uint32_t last_heartbeat = board_millis();
     for (;;)
     {
         usb_composite_service();
@@ -27,12 +26,6 @@ int main(void)
         keyboard_live_service();
         debug_service();
         board_watchdog_refresh();
-        const uint32_t now = board_millis();
-        if ((uint32_t)(now - last_heartbeat) >= 1000u)
-        {
-            last_heartbeat = now;
-            debug_write("USB service alive\r\n");
-        }
         __WFI();
     }
 }

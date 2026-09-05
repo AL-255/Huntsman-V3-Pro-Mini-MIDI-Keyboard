@@ -92,7 +92,7 @@ add_executable(huntsman_firmware
 )
 if(HUNTSMAN_KEYBOARD_DIAGNOSTICS)
     target_sources(huntsman_firmware PRIVATE src/main_keyboard.c src/debug_rx.c
-        src/optical_bus.c src/optical_transport.c src/keyboard_live.c
+        src/optical_bus.c src/optical_transport.c src/keyboard_live.c src/scan_stream.c
         ${NXP_DRIVERS}/lpc_dma/fsl_dma.c
         ${NXP_DRIVERS}/flexcomm/spi/fsl_spi_dma.c)
     target_compile_definitions(huntsman_firmware PRIVATE HUNTSMAN_KEYBOARD_DIAGNOSTICS=1)
@@ -193,6 +193,8 @@ if(HUNTSMAN_KEYBOARD_DIAGNOSTICS)
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_keyboard_console_arm.py
             $<TARGET_FILE:huntsman_firmware>
         COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_optical_bus_arm.py
+            $<TARGET_FILE:huntsman_firmware> --reference ${HUNTSMAN_PRODUCTION_REFERENCE}
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_scan_stream_arm.py
             $<TARGET_FILE:huntsman_firmware> --reference ${HUNTSMAN_PRODUCTION_REFERENCE}
         DEPENDS audit-usb USES_TERMINAL VERBATIM)
 endif()

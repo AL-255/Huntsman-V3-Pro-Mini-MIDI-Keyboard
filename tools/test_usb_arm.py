@@ -138,8 +138,10 @@ class UsbArm:
     def packet_entry(self, index):
         eplist = self.registers[USB + 8]
         entry = eplist + index * 8
-        if index >= 2 and not self.u32(entry) & 0x80000000 and self.u32(entry + 4) & 0x80000000:
-            entry += 4
+        if index >= 2:
+            # Hardware consumes ping-pong buffers in EPINUSE order. Choosing
+            # the first active buffer reorders a long double-buffered stream.
+            entry += ((self.registers.get(USB + 0x18, 0) >> index) & 1) * 4
         return entry
 
     def complete(self, index, payload=None):
@@ -152,6 +154,8 @@ class UsbArm:
             remaining = 0
         entry = self.packet_entry(index)
         self.put32(entry, (self.u32(entry) & ~0x83FFF800) | (remaining << 11))
+        if index >= 2:
+            self.registers[USB + 0x18] = self.registers.get(USB + 0x18, 0) ^ (1 << index)
         self.registers[USB + 0x20] = 1 << index
         self.interrupt()
 

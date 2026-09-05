@@ -29,7 +29,7 @@ def render(reference):
         values = [int.from_bytes(p.read(address + i * 2, 2), 'little') for i in range(11)]
         output.append(f'const uint16_t {name}[11] = {{' + ', '.join(f'0x{x:04x}' for x in values) + '};')
         output.append('')
-    return '\n'.join(output) + '\n'
+    return '\n'.join(output)
 
 
 if __name__ == '__main__':
