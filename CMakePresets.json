@@ -20,11 +20,21 @@
         "CMAKE_BUILD_TYPE": "Release",
         "HUNTSMAN_BUILD_FIRMWARE": "ON"
       }
+    },
+    {
+      "name": "keyboard-diagnostics",
+      "inherits": "firmware",
+      "displayName": "Keyboard/CDC diagnostic candidate (no automatic flash)",
+      "binaryDir": "${sourceDir}/build-keyboard",
+      "cacheVariables": {
+        "HUNTSMAN_KEYBOARD_DIAGNOSTICS": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "host-tests", "configurePreset": "host-tests" },
-    { "name": "firmware", "configurePreset": "firmware" }
+    { "name": "firmware", "configurePreset": "firmware" },
+    { "name": "keyboard-diagnostics", "configurePreset": "keyboard-diagnostics" }
   ],
   "testPresets": [
     {

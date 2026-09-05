@@ -1,19 +1,7 @@
 #include "keyboard.h"
 
 #include <string.h>
-
-/*
- * Provisional physical sensor order. The optical ASIC's runtime map is not
- * present in the application image, so this table is intentionally isolated
- * for calibration on hardware. It follows a conventional ANSI 60% row order.
- */
-static const uint8_t s_sensor_usage[] = {
-    0x29, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x2d, 0x2e, 0x2a,
-    0x2b, 0x14, 0x1a, 0x08, 0x15, 0x17, 0x1c, 0x18, 0x0c, 0x12, 0x13, 0x2f, 0x30, 0x31,
-    0x39, 0x04, 0x16, 0x07, 0x09, 0x0a, 0x0b, 0x0d, 0x0e, 0x0f, 0x33, 0x34, 0x28,
-    0xe1, 0x1d, 0x1b, 0x06, 0x19, 0x05, 0x11, 0x10, 0x36, 0x37, 0x38, 0xe5,
-    0xe0, 0xe3, 0xe2, 0x2c, 0xe6, 0x00, 0x65, 0xe4,
-};
+#include "keyboard_layout.h"
 
 void keyboard_report_clear(keyboard_report_t *report)
 {
@@ -70,7 +58,14 @@ bool keyboard_report_get_usage(const keyboard_report_t *report, uint8_t usage)
 
 uint8_t keyboard_usage_for_sensor(size_t sensor_index)
 {
-    return (sensor_index < (sizeof(s_sensor_usage) / sizeof(s_sensor_usage[0])))
-               ? s_sensor_usage[sensor_index]
-               : 0u;
+    /* Compatibility helper for ANSI only. New code uses the discovered
+     * profile, key ID and action directly (FN is not a HID usage). */
+    if (sensor_index >= 61u) return 0u;
+    const keyboard_action_t *action = keyboard_action(1u,
+        keyboard_key_for_sensor(1u, (uint8_t)sensor_index), 0u);
+    if (action == NULL || action->type != 2u) return 0u;
+    if (action->arg0)
+        for (unsigned bit = 0; bit < 8u; ++bit)
+            if (action->arg0 == (1u << bit)) return 0xe0u + bit;
+    return action->arg1;
 }

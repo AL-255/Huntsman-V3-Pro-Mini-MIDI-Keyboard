@@ -4,7 +4,7 @@ An independent LPC5528 application for the Razer Huntsman V3 Pro Mini. It is
 designed for the keyboard's existing bootloader and the 128 KiB application
 image linked at `0x20000000`; the bootloader is neither included nor modified.
 
-Current scope: **USB bring-up only**. A single authorized flash on 2026-09-05
+Hardware checkpoint: **USB bring-up only**. A single authorized flash on 2026-09-05
 enumerated at high speed on Linux with keyboard, MIDI, and CDC drivers bound.
 CDC emitted six `USB service alive` messages during a six-second read, and
 the supplied updater's version/serial queries succeeded. This is a USB
@@ -14,6 +14,15 @@ is not linked or executed. It sends neutral keyboard reports and a CDC
 heartbeat, with MIDI endpoints and the updater HID interface present.
 See [the USB-only audit](docs/USB_ONLY_AUDIT.md) for the two reproduced
 alignment faults, production PHY comparison, tests, and remaining limits.
+
+The keyboard candidate adds the recovered optical scan/key engine and FN
+configuration editors. It was flashed once after explicit authorization;
+software bootloader entry, high-speed re-enumeration and live isolated CDC
+editor tests passed. Physical optical scanning remains unvalidated and off.
+Build it with `keyboard-diagnostics`;
+the default USB-only preset remains separate. ASIC initialization and host
+keystrokes are explicitly CDC-gated. See [keyboard recovery and validation](docs/KEYBOARD_RECOVERY.md)
+for production handler addresses, commands, tests, and incomplete features.
 
 The USB-only image contains:
 
@@ -40,8 +49,9 @@ The device enumerates as `1532:02b0`. Interface 3 implements the Razer
 the bootloader's `0xaaaaaaaa` reset cookie at `0x2002fffc` and resets after a
 20 ms deferral starting only after EP0 IN status completion. A new SETUP or
 bus reset before that acknowledgment cancels entry. Those cases are tested
-offline; application-to-bootloader entry and the full physical update round
-trip remain unverified. Device-information queries used by the supplied
+offline; software entry from the USB-only checkpoint and the application-only
+update to the keyboard candidate subsequently passed on hardware.
+Device-information queries used by the supplied
 `../updater/` succeeded on hardware. Flash erase/program remains
 bootloader-owned; the trial checked program acknowledgments, not readback.
 
@@ -93,29 +103,14 @@ stubs board initialization; the startup and chirp tests cover those paths
 separately under explicit model assumptions. No build or test target flashes
 or resets a connected device.
 
-## Deferred full-application work (not part of USB bring-up)
+## Retained legacy peripheral code
 
-The following describes retained, incomplete code excluded by the default
-USB-only build. It is not being developed or used to block the USB-only audit.
-
-The peripheral pins, optical transactions, I2C addresses, boot cookie, memory
-layout, and updater framing are reconstructed from the supplied firmware and
-updater evidence, but the reconstruction is incomplete. Production startup
-queries ASIC metadata and selects 61/62/65-item profiles; the current code
-assumes 61. Production contains default profile tables as well as runtime
-table loading. The earlier statement that maps could not be recovered from
-the application image was not justified. `src/keyboard.c` still has a
-provisional ANSI 60% order and lighting has an identity LED order; neither
-should be treated as recovered production mapping.
-
-The current off-chip code also omits observed GPIO 8/26 transitions and the
-primary LED-enable table, and unconditionally accesses a secondary controller
-that production gates on ASIC profile 3. These must be resolved before
-re-enabling that code, not as part of the current USB-only work.
-
-Optical actuation defaults to 31.25% normalized travel and releases at 21.875%.
-The firmware waits for 128 complete valid scan frames before generating key
-events. These constants live in `include/optical_scan.h`.
+`src/main.c`, `src/optical_hw.c`, `src/optical_scan.c`, and `src/lighting.c`
+retain an incomplete earlier reconstruction. Neither the USB-only nor the
+keyboard-diagnostics entry point uses that peripheral path. Its guessed
+calibration and lighting order must not be treated as production evidence.
+The new keyboard path uses the recovered 61/62/65-sensor maps and replaces
+the provisional mapping formerly in `src/keyboard.c`.
 
 The secondary controller's own 37408-byte firmware update protocol is not
 implemented in this application. The main-MCU update path is implemented: a

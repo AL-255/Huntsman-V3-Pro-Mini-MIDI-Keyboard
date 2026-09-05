@@ -19,8 +19,10 @@ static void test_keyboard(void)
     assert(keyboard_report_set_usage(&report, 0xe1u, false));
     assert(!keyboard_report_get_usage(&report, 0xe1u));
     assert(!keyboard_report_set_usage(&report, 0x74u, true));
-    assert(keyboard_usage_for_sensor(0u) == 0x29u);
-    assert(keyboard_usage_for_sensor(60u) == 0xe4u);
+    assert(keyboard_usage_for_sensor(0u) == 0x25u); /* 8, reversed ASIC order */
+    assert(keyboard_usage_for_sensor(8u) == 0x29u); /* Escape */
+    assert(keyboard_usage_for_sensor(43u) == 0u); /* FN after startup map patch */
+    assert(keyboard_usage_for_sensor(60u) == 0x36u); /* comma */
     assert(keyboard_usage_for_sensor(61u) == 0u);
 }
 

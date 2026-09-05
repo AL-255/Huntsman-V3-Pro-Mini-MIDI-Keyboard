@@ -12,6 +12,10 @@
 #include "usb_device_config.h"
 #include "usb_device_hid.h"
 #include "usb_device_dci.h"
+#ifdef HUNTSMAN_KEYBOARD_DIAGNOSTICS
+#include "debug_rx.h"
+#include "keyboard_live.h"
+#endif
 
 #define USB_CONTROLLER_ID ((uint8_t)kUSB_ControllerLpcIp3511Hs0)
 #define USB_BUFFER __attribute__((section(".usb_sram"), aligned(64)))
@@ -162,7 +166,10 @@ static usb_status_t cdc_callback(class_handle_t handle, uint32_t event, void *pa
             {
                 return kStatus_USB_Success;
             }
-            /* Input is reserved for future diagnostics. */
+#ifdef HUNTSMAN_KEYBOARD_DIAGNOSTICS
+            if (message->length <= sizeof(s_cdc_rx))
+                debug_rx_receive(message->buffer, message->length);
+#endif
             return USB_DeviceCdcAcmRecv(handle, USB_CDC_DATA_ENDPOINT, s_cdc_rx,
                                         g_cdcDataEndpoints[1].maxPacketSize);
         case kUSB_DeviceCdcEventGetLineCoding:
@@ -222,6 +229,10 @@ static usb_status_t device_callback(usb_device_handle handle, uint32_t event, vo
     switch (event)
     {
         case kUSB_DeviceEventBusReset:
+#ifdef HUNTSMAN_KEYBOARD_DIAGNOSTICS
+            debug_rx_reset();
+            keyboard_live_usb_reset();
+#endif
         {
             uint8_t speed = USB_SPEED_FULL;
             s_attached = false;

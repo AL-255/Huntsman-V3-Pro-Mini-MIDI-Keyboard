@@ -2,6 +2,9 @@ cmake_minimum_required(VERSION 3.20)
 
 option(HUNTSMAN_BUILD_FIRMWARE "Build the LPC5528 application image" OFF)
 option(HUNTSMAN_USB_ONLY "Build USB bring-up without optical or lighting initialization" ON)
+option(HUNTSMAN_KEYBOARD_DIAGNOSTICS "Enable recovered keyboard engine and isolated CDC tests" OFF)
+set(HUNTSMAN_PRODUCTION_REFERENCE "${CMAKE_CURRENT_SOURCE_DIR}/../extracted_firmware/raw/Talia_T1_60%_7203_App_FW_v2.1.0_E888780F.bin"
+    CACHE FILEPATH "Read-only hash-pinned production reference for offline audits")
 
 if(HUNTSMAN_BUILD_FIRMWARE)
     project(huntsman_v3_pro_mini_midi C ASM)
@@ -12,9 +15,19 @@ endif()
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-add_library(huntsman_core STATIC
+set(KEYBOARD_LOGIC_SOURCES
     src/keyboard.c
+    src/keyboard_engine.c
+    src/keyboard_console.c
+    src/keyboard_scan.c
+    src/optical_key.c
+    src/keyboard_config.c
+    src/keyboard_layout.c
+    src/keyboard_reference_tables.c
+)
+add_library(huntsman_core STATIC
     src/optical_scan.c
+    ${KEYBOARD_LOGIC_SOURCES}
     src/updater_protocol.c
 )
 target_include_directories(huntsman_core PUBLIC include)
@@ -26,6 +39,20 @@ if(NOT HUNTSMAN_BUILD_FIRMWARE)
     target_link_libraries(core_tests PRIVATE huntsman_core)
     target_compile_options(core_tests PRIVATE -Wall -Wextra -Werror)
     add_test(NAME core_tests COMMAND core_tests)
+    # Host ABI for comparison against executed production ARM instructions.
+    add_library(keyboard_logic SHARED ${KEYBOARD_LOGIC_SOURCES})
+    target_include_directories(keyboard_logic PUBLIC include)
+    target_compile_options(keyboard_logic PRIVATE -Wall -Wextra -Werror)
+    add_custom_target(audit-keyboard
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/keyboard_reference_tables.py
+            ${HUNTSMAN_PRODUCTION_REFERENCE} --check ${CMAKE_CURRENT_SOURCE_DIR}/src/keyboard_reference_tables.c
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_keyboard_config.py
+            $<TARGET_FILE:keyboard_logic> --reference ${HUNTSMAN_PRODUCTION_REFERENCE}
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_optical_key.py
+            $<TARGET_FILE:keyboard_logic> --reference ${HUNTSMAN_PRODUCTION_REFERENCE}
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_keyboard_scan.py
+            $<TARGET_FILE:keyboard_logic> --reference ${HUNTSMAN_PRODUCTION_REFERENCE}
+        DEPENDS keyboard_logic USES_TERMINAL VERBATIM)
     return()
 endif()
 
@@ -63,7 +90,13 @@ add_executable(huntsman_firmware
     src/usb_errata.c
     src/usb_safe_memcpy.c
 )
-if(HUNTSMAN_USB_ONLY)
+if(HUNTSMAN_KEYBOARD_DIAGNOSTICS)
+    target_sources(huntsman_firmware PRIVATE src/main_keyboard.c src/debug_rx.c
+        src/optical_bus.c src/optical_transport.c src/keyboard_live.c
+        ${NXP_DRIVERS}/lpc_dma/fsl_dma.c
+        ${NXP_DRIVERS}/flexcomm/spi/fsl_spi_dma.c)
+    target_compile_definitions(huntsman_firmware PRIVATE HUNTSMAN_KEYBOARD_DIAGNOSTICS=1)
+elseif(HUNTSMAN_USB_ONLY)
     target_sources(huntsman_firmware PRIVATE src/main_usb.c)
 else()
     target_sources(huntsman_firmware PRIVATE src/main.c src/lighting.c src/optical_hw.c)
@@ -82,6 +115,7 @@ target_include_directories(huntsman_firmware PRIVATE
     ${NXP_DRIVERS}/flexcomm/i2c
     ${NXP_DRIVERS}/flexcomm/spi
     ${NXP_DRIVERS}/lpc_gpio
+    ${NXP_DRIVERS}/lpc_dma
     ${NXP_USB}/include
     ${NXP_USB}/phy
     ${NXP_USB}/device
@@ -153,6 +187,15 @@ add_custom_target(audit-usb
     USES_TERMINAL
     VERBATIM
 )
+
+if(HUNTSMAN_KEYBOARD_DIAGNOSTICS)
+    add_custom_target(audit-keyboard
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_keyboard_console_arm.py
+            $<TARGET_FILE:huntsman_firmware>
+        COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_optical_bus_arm.py
+            $<TARGET_FILE:huntsman_firmware> --reference ${HUNTSMAN_PRODUCTION_REFERENCE}
+        DEPENDS audit-usb USES_TERMINAL VERBATIM)
+endif()
 
 add_custom_command(TARGET huntsman_firmware POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O binary --gap-fill 0xFF --pad-to 0x20020000
