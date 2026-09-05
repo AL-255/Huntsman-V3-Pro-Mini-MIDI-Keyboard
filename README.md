@@ -19,14 +19,22 @@ alignment faults, production PHY comparison, tests, and remaining limits.
 The keyboard candidate adds the recovered optical scan/key engine and FN
 configuration editors. It was flashed once after explicit authorization;
 software bootloader entry, high-speed re-enumeration and live isolated CDC
-editor tests passed. Physical optical scanning remains unvalidated and off.
+editor tests passed. Physical optical readbacks were subsequently tested with
+the streaming image below; physical key/editor behavior remains unvalidated.
 Build it with `keyboard-diagnostics`;
 the default USB-only preset remains separate. ASIC initialization and host
 keystrokes are explicitly CDC-gated. See [keyboard recovery and validation](docs/KEYBOARD_RECOVERY.md)
 for production handler addresses, commands, tests, and incomplete features.
 
-The latest, not-yet-flashed revision streams whole-keyboard uint16 readbacks
-over CDC instead of periodic status text. Use the separate `scan-stream`
+The latest revision streams whole-keyboard uint16 readbacks over CDC instead
+of periodic status text. It was flashed once with authorization; high-speed USB,
+CDC commands, and quiet idle output passed. A subsequent live CDC test started
+the scanner once and received complete 61-sensor frames at about **1.60 kHz**,
+with zero sequence gaps or invalid samples during the measured capture.
+**The requested 8 kHz is not achieved.** Scanning/streaming were left enabled
+for this running session; host keystrokes remain disabled. After a reboot,
+scanning still requires `scan start`.
+Use the separate `scan-stream`
 preset to preserve the flashed build artifacts. Binary framing, host decoding,
 8 kHz target and physical timing limits are in [CDC scan streaming](docs/SCAN_STREAM.md).
 

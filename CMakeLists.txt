@@ -39,6 +39,7 @@ if(NOT HUNTSMAN_BUILD_FIRMWARE)
     target_link_libraries(core_tests PRIVATE huntsman_core)
     target_compile_options(core_tests PRIVATE -Wall -Wextra -Werror)
     add_test(NAME core_tests COMMAND core_tests)
+    add_test(NAME scan_display COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_scan_display.py)
     # Host ABI for comparison against executed production ARM instructions.
     add_library(keyboard_logic SHARED ${KEYBOARD_LOGIC_SOURCES})
     target_include_directories(keyboard_logic PUBLIC include)
