@@ -13,7 +13,7 @@ from keyboard_gui_transport import Connection
 
 
 def packet(ack=1, result=1, press=None, release=None, flags=7, sequence=0, version=4,
-           velocity=None, captures=None, states=None, mapping=None, performance_mode=0, octave=0):
+           velocity=None, captures=None, states=None, mapping=None, performance_mode=0, octave=0, calibration_state=0):
     size = SIZE if version >= 4 else 1088 if version >= 2 else 480
     data = bytearray(size)
     struct.pack_into('<4sH6B5I',data,0,f'HKG{version}'.encode(),size,version,1,61,flags,result,0,sequence,0,ack,0,0)
@@ -26,12 +26,15 @@ def packet(ack=1, result=1, press=None, release=None, flags=7, sequence=0, versi
     if version >= 4:
         struct.pack_into('<BbBB',data,1032,performance_mode,octave,1,0)
         data[1036:1097] = bytes(mapping or [255]*61)
+    if version >= 5:
+        data[1112]=calibration_state
+        data[1114]=255; data[1115]=4 | int(1 <= calibration_state <= 5)
     struct.pack_into('<I',data,size-4,sum(struct.unpack_from(f'<{(size-4)//2}H',data)))
     return bytes(data)
 
 
 class Device(threading.Thread):
-    def __init__(self,fd,reject=False,mismatch=False,silent=False):
+    def __init__(self,fd,reject=False,mismatch=False,silent=False,version=4):
         super().__init__(daemon=True)
         self.fd,self.reject,self.mismatch,self.silent = fd,reject,mismatch,silent
         self.stop_event = threading.Event()
@@ -40,6 +43,7 @@ class Device(threading.Thread):
         self.mapping = [255]*61
         self.flags,self.ack,self.result,self.sequence = 7,0,0,0
         self.error = None
+        self.version=version; self.calibration_state=0
 
     def run(self):
         buffer = bytearray(); streaming = False; last = 0
@@ -66,8 +70,12 @@ class Device(threading.Thread):
                         elif fields[1] == 'midi':
                             if self.reject: self.result = 2
                             elif not self.mismatch: self.mapping[int(fields[3])] = int(fields[4])
+                        elif fields[1] == 'calibrate': self.calibration_state=3
+                        elif fields[1] == 'calcancel': self.calibration_state=7
                 if streaming and not self.silent and time.monotonic()-last > .03:
-                    os.write(self.fd,packet(self.ack,self.result,self.press,self.release,self.flags,self.sequence,mapping=self.mapping))
+                    os.write(self.fd,packet(self.ack,self.result,self.press,self.release,self.flags,self.sequence,mapping=self.mapping,
+                                           version=self.version,calibration_state=self.calibration_state,
+                                           states=[9,9]+[1]*59 if self.version>=6 and self.calibration_state==3 else None))
                     self.sequence += 1; last = time.monotonic()
         except Exception as error: self.error = error
 
@@ -81,6 +89,27 @@ def until(predicate,seconds=3):
 
 
 class Tests(unittest.TestCase):
+    def test_calibration_model(self):
+        s=decode(packet(version=5))
+        self.assertEqual((s.version,s.calibration_state,s.calibration_flags,s.calibration_selected),(5,0,4,255))
+        b=bytearray(packet(version=5))
+        struct.pack_into('<4BHH',b,1112,3,1,32,5,500,4000)
+        b[1120]=1
+        struct.pack_into('<HH',b,1130,4000,1000)
+        def checksum(data):
+            struct.pack_into('<I',data,len(data)-4,sum(struct.unpack_from(f'<{(len(data)-4)//2}H',data)))
+            return data
+        s=decode(checksum(b)); self.assertTrue(s.calibration_done[0]); self.assertEqual(s.calibration_hold,500)
+        for offset,value in ((1112,9),(1113,2),(1114,61),(1115,4),(1128,128),(1129,5),(1134,1),(1144,1)):
+            bad=bytearray(b); bad[offset]=value
+            with self.assertRaises(ValueError): decode(checksum(bad))
+        parallel=bytearray(packet(version=6,calibration_state=3,states=[8,8]+[0]*59))
+        s=decode(parallel); self.assertEqual(s.velocity_state[:3],(8,8,0))
+        parallel[1112]=0; parallel[1115]=4
+        with self.assertRaisesRegex(ValueError,'hold bitmap'): decode(checksum(parallel))
+        legacy=packet(version=5,calibration_state=3,states=[8]+[0]*60)
+        with self.assertRaisesRegex(ValueError,'velocity data'): decode(legacy)
+
     def test_midi_model(self):
         for n in range(128): self.assertEqual(parse_note(note_name(n)),n)
         self.assertEqual(parse_note('Eb0'),15)

@@ -18,12 +18,13 @@ static bool s_enabled;
 static volatile bool s_busy, s_reset;
 static bool s_key_mode, s_key_fault, s_fault_sent, s_first;
 static bool s_gui_mode;
+static bool s_dump_mode;
 static bool s_pressed[65];
 static uint8_t s_selected, s_profile;
 static uint16_t s_threshold;
 static uint32_t s_session;
 
-static unsigned record_size(void) { return s_gui_mode ? SCAN_STREAM_GUI_SIZE : s_key_mode ? SCAN_STREAM_KEY_SIZE : SCAN_STREAM_RECORD_SIZE; }
+static unsigned record_size(void) { return s_dump_mode ? 128u : s_gui_mode ? SCAN_STREAM_GUI_SIZE : s_key_mode ? SCAN_STREAM_KEY_SIZE : SCAN_STREAM_RECORD_SIZE; }
 static unsigned capacity(void) { return sizeof(s_records) / record_size(); }
 
 static void le16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8u; }
@@ -36,10 +37,12 @@ void scan_stream_init(void)
     s_enabled = s_busy = s_reset = false;
     s_key_mode = s_key_fault = s_fault_sent = false;
     s_gui_mode = false;
+    s_dump_mode = false;
 }
 void scan_stream_last_key(uint16_t threshold, uint32_t session)
 {
     scan_stream_stop(); /* explicit session boundary; pending IN stays immutable */
+    s_dump_mode = false;
     s_gui_mode = false;
     s_key_mode = s_first = true;
     s_key_fault = s_fault_sent = false;
@@ -53,19 +56,35 @@ void scan_stream_last_key(uint16_t threshold, uint32_t session)
 }
 void scan_stream_whole(void)
 {
-    if (!s_key_mode && !s_gui_mode) return;
+    if (!s_key_mode && !s_gui_mode && !s_dump_mode) return;
     scan_stream_stop();
+    s_dump_mode = false;
     s_key_mode = s_key_fault = s_fault_sent = false;
     s_gui_mode = false;
 }
 void scan_stream_gui(void)
 {
     scan_stream_stop();
+    s_dump_mode = false;
     s_key_mode = s_key_fault = s_fault_sent = false;
     s_gui_mode = true;
     scan_stream_start();
 }
 bool scan_stream_gui_enabled(void) { return s_gui_mode && s_enabled; }
+bool scan_stream_dump_ready(void)
+{
+    if (s_busy || (s_dump_mode && s_count) || !usb_cdc_ready()) return false;
+    scan_stream_stop();
+    s_dump_mode = true; s_gui_mode = s_key_mode = false;
+    scan_stream_start();
+    return true;
+}
+void scan_stream_dump_push(const uint8_t report[128])
+{
+    if (!s_dump_mode || !s_enabled || s_count) return;
+    memcpy(s_records, report, 128u);
+    s_head = 1u; s_tail = 0u; s_count = 1u;
+}
 void scan_stream_gui_push(const uint8_t report[SCAN_STREAM_GUI_SIZE])
 {
     if (!scan_stream_gui_enabled() || !usb_cdc_ready()) return;
@@ -106,7 +125,7 @@ void scan_stream_usb_reset(void) { s_reset = true; s_busy = false; }
 void scan_stream_push(const uint16_t *samples, uint8_t count, uint8_t profile, uint32_t tick)
 {
     if (!s_enabled || !count || count > 65u) return;
-    if (s_gui_mode) return;
+    if (s_gui_mode || s_dump_mode) return;
     if (s_key_mode)
     {
         if (s_key_fault) return; /* fail-stop until an explicit new session */
@@ -178,7 +197,7 @@ bool scan_stream_service(void)
         return owns;
     }
     const unsigned size = record_size();
-    const unsigned batch = s_gui_mode ? 1u : BATCH * SCAN_STREAM_RECORD_SIZE / size;
+    const unsigned batch = (s_gui_mode || s_dump_mode) ? 1u : BATCH * SCAN_STREAM_RECORD_SIZE / size;
     const unsigned count = s_count < batch ? s_count : batch;
     for (unsigned i = 0; i < count; ++i)
         memcpy(s_packet + i * size,

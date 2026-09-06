@@ -8,6 +8,7 @@ from test_lighting_arm import LightingArm
 from test_scan_stream_arm import drain, key_push
 from last_key_stream import press_velocity, KeyDecoder
 from scan_bars import sensor_labels
+from lighting_reference_tables import recover
 
 
 def midi_tests(args):
@@ -15,9 +16,12 @@ def midi_tests(args):
     dev.service(400)
     labels = sensor_labels()[61]
     s = snapshot(dev,'stream gui')
-    expected = {'Tab':12,'Q':14,'W':16,'E':17,'R':19,'T':33,'Y':35,'U':24,
-                'I':26,'O':28,'P':29,'[':31,']':45,'\\':47,'1':13,'2':15,
-                '4':18,'5':32,'6':34,'8':25,'9':27,'-':30,'=':44,'BkS':46}
+    expected = {'Tab':72,'Q':74,'W':76,'E':77,'R':79,'T':81,'Y':83,'U':84,
+                'I':86,'O':88,'P':89,'[':91,']':93,'\\':95,'1':73,'2':75,
+                '4':78,'5':80,'6':82,'8':85,'9':87,'-':90,'=':92,'BkS':94,
+                'LSh':60,'A':61,'Z':62,'S':63,'X':64,'C':65,'F':66,'V':67,
+                'G':68,'B':69,'H':70,'N':71,'M':72,'K':73,',':74,'L':75,
+                '.':76,'/':77,"'":78}
     assert s.performance_mode == 0
     assert s.midi_mapping == tuple(expected.get(label,255) for label in labels)
     def set_keys(**keys):
@@ -33,13 +37,32 @@ def midi_tests(args):
     for v in (3400,3300,3200,3100,3000):
         values[labels.index('Tab')] = v; one_raw_frame(dev,values)
     dev.service(40)
-    assert bytes([9,0x90,12,23]) in dev.midi_packets, dev.midi_packets
-    assert any(p[:3] == bytes([10,0xa0,12]) for p in dev.midi_packets)
+    assert bytes([9,0x90,72,23]) in dev.midi_packets, dev.midi_packets
+    assert any(p[:3] == bytes([10,0xa0,72]) for p in dev.midi_packets)
     assert all(not any(p) for p in dev.reports), dev.reports
+    # The lower row's Shift key emits C4, with the pop filtered on the MCU.
+    values=dev.raw.copy(); values[labels.index('LSh')]=3500
+    one_raw_frame(dev,values)
+    for v in (3400,3300,2300,2200,2100):
+        values[labels.index('LSh')]=v; one_raw_frame(dev,values)
+    dev.service(30)
+    assert bytes([9,0x90,60,23]) in dev.midi_packets
+    set_keys(LSh=3900)
+    assert bytes([8,0x80,60,0]) in dev.midi_packets
     set_keys(LAl=3500); dev.service(40)
     assert snapshot(dev).octave == 1
+    # Exercise the compiled overlay with actual recovered control-key routing.
+    maps,_ = recover(args.reference)
+    _,r,g,b = maps[0][labels.index('LAl')]
+    _,cr,cg,cb = maps[0][labels.index('LCt')]
+    for t,color in ((600000,(128,48,0)),(600600,(0,0,0))):
+        dev.cpu.mem_write(0x2003d000,bytes([7])*204)
+        dev.call('keyboard_midi_lights',dev.symbols['s_midi'],0x2003d000,t)
+        rgb=bytes(dev.cpu.mem_read(0x2003d000,204))
+        assert (rgb[r],rgb[g],rgb[b]) == color
+        assert (rgb[cr],rgb[cg],rgb[cb]) == (7,7,7)
     set_keys(LAl=3900,Tab=3900)
-    assert bytes([8,0x80,12,0]) in dev.midi_packets
+    assert bytes([8,0x80,72,0]) in dev.midi_packets
     s=snapshot(dev,'cfg midi 950 32 60'); assert s.result == 1 and s.midi_mapping[32] == 60
     dev.service(180)
     for cmd in ('cfg midi 951 32 128','cfg midi 951 99 60',f'cfg midi 951 {labels.index("Fn")} 60',
@@ -84,7 +107,7 @@ def velocity_tests(args):
     dev.service(400)
     snapshot(dev,'stream gui')
     s = snapshot(dev,'cfg enable 301 0')
-    assert s.version == 4 and len(s.velocity) == 65 and not s.flags & 1
+    assert s.version == 6 and len(s.velocity) == 65 and not s.flags & 1
     one_raw_frame(dev,[3500]*65)
     for j in range(1,6): one_raw_frame(dev,[3500-(i+1)*j for i in range(65)])
     s = snapshot(dev)
@@ -101,18 +124,22 @@ def velocity_tests(args):
     assert s.captures[0] == 4 and s.captures[1:] == (1,)*64
     assert abs(s.velocity[0] - max(0,min(1,press_velocity(rapid[-5:])/4500000))) < 1e-7
     for points in ((2000,2100,2200,2300,2400),(3000,)*5,
-                   (3000,3000,3000,2999,3000),(3000,3000,3000,1876,750),
-                   (3000,3000,3000,1875,750),(3000,3000,3000,1874,750),
-                   (3500,3500,3000,1000,1)):
+                   (3000,2999,2998,2996,2976),(3500,2938,2376,1813,813),
+                   (3500,2937,2374,1812,812),(3500,2700,1900,1100,300),
+                   (3000,3000,2990,2970,2940),(3000,2970,2950,2940,2940),
+                   (3400,3300,2300,2200,2100),(2000,1990,2990,2980,2970)):
         dev.raw[0] = 3900; baseline = snapshot(dev).captures[0]
+        # Keep this single-strike fixture below release. A value of 4096 in
+        # its window rearms and triggers a second valid capture, which can
+        # replace the first result before the next slow GUI snapshot.
         values = dev.raw.copy(); values[0] = 3500; one_raw_frame(dev,values)
         for value in points:
             values[0] = value; one_raw_frame(dev,values)
         s = snapshot(dev)
         expected = max(0,min(1,press_velocity(points)/4500000))
-        assert type(s.velocity[0]) is float and abs(s.velocity[0]-expected) < 1e-7
+        assert type(s.velocity[0]) is float and abs(s.velocity[0]-expected) < 1e-7, (points,s.velocity[0],expected,s.captures[0],baseline)
         assert s.captures[0] == baseline+1
-    print('PASS ARM float32 telemetry: negative/zero clamp, fractional fit, below/at/above 4500000')
+    print('PASS ARM float32 pop filter: negative/zero clamp, fractional mean, below/above 4500000, high/low pops and tie handling')
     s = snapshot(dev,'cfg all 302 3100 3300')
     assert (s.ack,s.result,s.revision) == (302,1,1)
     assert s.press == (3100,)*65 and s.release == (3300,)*65
@@ -122,7 +149,7 @@ def velocity_tests(args):
         s = snapshot(dev,bad)
         assert (s.ack,s.result,s.revision) == (303,2,1)
         assert s.press == (3100,)*65 and s.release == (3300,)*65
-    print('PASS ARM DMA -> 65 simultaneous independent velocities, exact legacy fit, overlapping retriggers, HID disabled, atomic all-key command/readback')
+    print('PASS ARM DMA -> 65 independent filtered velocities, overlapping retriggers, HID disabled, atomic all-key command/readback')
 
 
 def main():

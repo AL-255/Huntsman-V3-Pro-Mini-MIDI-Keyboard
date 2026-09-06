@@ -1,11 +1,13 @@
 # Keyboard and MIDI performance design
 
-Status: implemented, tested offline and **flashed once with authorization**.
-USB enumeration passed; physical MIDI playing and LED appearance remain
-unvalidated. See [the validation record](MIDI_VALIDATION.md).
-This is new application behavior, not a claim that the stock firmware implements
+Current application: `keyboard-calibration-parallel`, installed and read back
+on hardware. See
+[current validation](CALIBRATION.md#validation-status) and
+[filter design](MIDI_FILTER.md).
+This is application behavior, not a claim that the stock firmware implements
 MIDI. Existing production-derived sensor/LED maps and board initialization remain
-the hardware reference. No peripheral reset sequence or flash writer was added.
+the hardware reference. MIDI did not add a peripheral reset sequence.
+Calibration uses a separately bounded two-page flash writer.
 
 ## Ownership and scan flow
 
@@ -17,7 +19,8 @@ The USB stack continues to own a stable four-byte MIDI IN transfer buffer.
 
 ```
 valid optical frame → raw Schmitt edges and per-key velocity windows
-                   → priority Fn+Enter mode chord
+                   → keyboard-mode Fn+C / active calibration (output suppressed)
+                   → otherwise priority Fn+Enter mode chord
                    → keyboard: existing NKRO/Fn engine
                    → MIDI: delayed strikes → ordered Note On/Off queue
                            held-note travel → latest poly-pressure values
@@ -25,9 +28,11 @@ main loop → queued note events first → changed pressure values → NXP USB I
 ```
 
 The MIDI state is 1516 bytes, with fixed capacities and no dynamic allocation.
-The candidate fits the original memory partition: 23816/24576 bytes SRAMX,
+The current application uses 23816/24576 bytes SRAMX,
 15488/16384 bytes USB SRAM, and a separate 8192-byte stack. The reserved final
-1024 application-image bytes remain unused. The firmware binary remains 128 KiB.
+1024 application-image bytes remain unused. Calibration state uses 1324 bytes
+of writable application-image RAM, separate from velocity/MIDI state. The
+firmware binary remains 128 KiB.
 
 ## Mode and key routing
 
@@ -41,7 +46,7 @@ release thresholds before arming again; a held chord cannot toggle repeatedly.
 Keyboard mode uses the recovered base/Fn action maps. MIDI mode does not invoke
 that HID/configuration engine for raw edges, so performance keys do not type
 letters or activate the legacy Fn+Tab/Caps editor. The GUI uses a separate
-performance-mode field; its older editor-mode field retains its meaning.
+performance-mode field, distinct from its Fn editor-mode field.
 
 Fn, left Ctrl and left Alt are reserved MIDI controls. Left Ctrl/Alt decrement
 or increment a signed octave offset once per down edge, limited to −10…+10.
@@ -52,8 +57,9 @@ transposed notes are silent, not wrapped or clamped to another pitch.
 
 Mappings are per raw sensor for the identified ANSI/ISO/JIS layout. Defaults
 are assigned using the recovered base HID action, not guessed scan order.
-All unmapped keys use sentinel 255; notes are 0…127. The user's unusual T/Y and
-bracket/backslash octave jumps are preserved exactly. The GUI supports ANSI
+All unmapped keys use sentinel 255; notes are 0…127. The current default has
+43 mapped keys: Tab through backslash span C5–B6, and Left Shift through the
+apostrophe key span C4–F#5. Left Shift is a note only in MIDI mode. The GUI supports ANSI
 geometry; firmware behavior and native polyphony tests cover all three layouts.
 
 ## Velocity and short strikes
@@ -61,10 +67,17 @@ geometry; firmware behavior and native polyphony tests cover all three layouts.
 For samples y1…y5 **after** the press threshold crossing:
 
 ```
-counts_per_second = 800 * (2*y1 + y2 - y4 - 2*y5)
+d = [y1-y2, y2-y3, y3-y4, y4-y5]
+outlier = earliest interval with largest abs(d[i] - median(d))
+counts_per_second = (sum(d) - d[outlier]) / 3 * 8000
 normalized = clamp(counts_per_second / 4500000, 0, 1)
 MIDI attack velocity = max(1, round(normalized * 127))
 ```
+
+For four values, median means the midpoint of the two middle sorted values.
+Exactly one interval is discarded, even when all deviations tie. Fractions
+are retained until float normalization. The filter adds no scan delay beyond
+the five-sample capture window. See [filter edge cases](MIDI_FILTER.md).
 
 The MCU computes both the normalized float and the final MIDI byte. The GUI
 does not normalize velocity. A Note On with velocity zero has Note Off semantics,
@@ -91,7 +104,8 @@ channel pressure (`0xD0`). Every sounding pitch has its own pressure value.
 Pressure increases with normalized optical travel, using the same lower/upper
 endpoints and clamping as white travel lighting, then converting to 0…127.
 This is a travel proxy, not an additional pressure sensor or calibrated force.
-The recovered endpoint fallback/calibration limitations still apply.
+Saved user calibration overrides the recovered/fallback endpoints after scan
+settling. See [calibration limits](CALIBRATION.md#measurement-choices).
 
 Pressure is recomputed from the latest hardware frame. Changed values are
 scheduled in fair note-number sweeps, at most one sweep start per 10 ms. A busy
@@ -137,6 +151,13 @@ MIDI or keyboard operation.
 The existing LED framebuffer is overlaid with two 150 ms color pulses separated
 by 150 ms intervals: green for keyboard, blue for MIDI. Between indications,
 Enter is a dim persistent marker. Other keys keep white travel-proportional PWM.
+In MIDI mode with a nonzero octave offset, Left Ctrl (negative) or Left Alt
+(positive) instead blinks amber. The on and off intervals are each
+`60 * (11 - abs(octave))` milliseconds: the full period decreases from 1200 ms
+at magnitude 1 to 120 ms at magnitude 10. The shortest half-period remains
+longer than the existing 40 ms LED update period. The other control retains
+its travel lighting. Zero shift and keyboard mode disable this octave overlay.
+The whole-keyboard mode-change pulse takes priority when active.
 The overlay uses recovered per-profile channels, not new GPIO or controller
 initialization. Existing `light off`, invalid/stale frame blanking and transfer
 ownership still take precedence.
@@ -144,7 +165,10 @@ ownership still take precedence.
 Per-key note edits are acknowledged over CDC and invalidate held output, just
 like threshold edits. They are **RAM-only**. Version-2 host JSON includes note
 mappings alongside threshold pairs; it does not save transient mode/octave.
-Stock persistent state remains untouched. See [storage](DEVICE_CONFIG_STORAGE.md).
+Primary stock settings and serial-number data remain untouched. Calibration
+endpoints, unlike mappings, persist in two verified unused tail pages. The
+calibration overlay takes priority while collecting keys, with independent
+amber holds and green completion. See [storage](DEVICE_CONFIG_STORAGE.md).
 
 ## Validation boundaries
 
@@ -161,8 +185,9 @@ cleanup, HID isolation/recovery and CDC transport at both modeled speeds.
 Tk/PTY tests exercise actual GUI actions against a simulated serial peer.
 
 These do not establish physical sampling frequency, scan execution-time margin,
-LED appearance, audible behavior or host DAW compatibility. Existing hardware
-checkpoints are not validation of MIDI playing on this candidate.
+LED appearance, audible behavior or host DAW compatibility. Physical application
+readback and calibration/save verification do not establish comprehensive
+DAW compatibility.
 
 MIDI semantics reference: the MIDI Association's
 [zero-velocity Note On discussion](https://midi.org/community/midi-specifications/zero-velocity-note-on).

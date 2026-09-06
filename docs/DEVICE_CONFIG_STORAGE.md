@@ -1,68 +1,111 @@
-# Application-owned configuration allocation
+# Device calibration storage
 
-Status: **space reserved and build-validated; persistent save is not implemented
-or enabled. No hardware flash or configuration writes were performed.**
+Calibration uses **only two whole 512-byte pages at physical addresses
+0x7d400 and 0x7d600**. The beginning of configuration storage, including the
+serial number and primary settings at 0x49000..0x49400, is not an erase target.
 
-The stock configuration, profiles, allocator records, macros, factory data,
-calibration and bootloader must remain untouched. No part of their storage is
-allocated to this application.
+## Evidence and ownership
 
-The application linker now limits code and initialized data to the first
-127 KiB of the existing 128 KiB updater image. Its last 1 KiB is reserved:
+On 2026-09-05, two independent controller reads of 0x49400..0x7d800 matched,
+without read errors. Both selected pages contained exactly 512 FF bytes.
+The original allocator's block chain at 0x54400 identifies five allocated
+0x580-byte blocks followed by a free block starting at 0x55f80 with size
+0x29480 (ending at 0x7f400). The selected pages are inside its free payload,
+not its header or footer. The final footer lies outside the conservative
+read boundary and was not read; it is not claimed verified.
 
-| Slot | Image offset | RAM execution-image address | Size |
-| --- | --- | --- | --- |
-| A | `0x1fc00` | `0x2001fc00` | 512 bytes |
-| B | `0x1fe00` | `0x2001fe00` | 512 bytes |
+The private tail backup's SHA256 is
+`dcc23b75e95268474d58fe4c11082dbf032320afa6cd82aa12386f4511523852`.
+The primary-settings backup is
+`023f502cf741e4d577b88a2064a3a897fe0c544e61cfc7273cb1a4678b183114`.
+Both are ignored by Git. No serial-number bytes are published.
 
-These are **not physical flash addresses**. Do not pass them to a flash driver.
-The two slots provide room for a future alternating-record format containing
-all 65 press/release pairs (260 bytes), layout identity, version, generation
-and integrity fields. No record format or power-loss guarantee is implemented
-by this allocation alone.
+The FF tail inside the primary settings' second page is deliberately **not**
+used: erasing it would also erase existing settings in that same page.
+The independent application does not use the original allocator. Returning to
+stock firmware may reclaim or clear the free block and lose our calibration.
+We do not alter allocator boundary tags or promise that stock preserves our data.
 
-The section is `NOLOAD`: startup does not initialize it. Existing binary
-padding fills both slots with FF in every fresh 131072-byte updater image.
-Linker bounds prevent application code/data from growing into the slots;
-the post-build validator checks their symbols, the load boundary and FF bytes.
-The updater continues to receive its original fixed-size image. A normal full
-application update will replace these image bytes, so configuration retention
-across firmware updates is **not** promised.
+## Record and recovery
 
-## Remaining prerequisite for erase/program
+Each HKC1 page uses this little-endian layout:
 
-The supplied updater's `flash_app_image()` sends RAM-image addresses
-`0x20000000..0x20020000` to the existing bootloader. This does not establish
-the physical backing-flash address, nor which integrity checks that bootloader
-performs on subsequent boots. The extracted primary application is not a
-bootloader dump. Its known stock-settings write routines do not establish
-either property for the application image.
+| Offset | Field |
+| --- | --- |
+| 0 | Four-byte `HKC1` magic |
+| 4, 5, 6, 7 | uint8 version 1, layout, sensor count, reserved zero |
+| 8 | uint32 generation |
+| 12 | uint32 ownership marker `0x314c4143` |
+| 16 | 65 uint16 lower bounds |
+| 146 | 65 uint16 upper bounds |
+| 276..507 | Reserved FF padding |
+| 508 | IEEE CRC32 over bytes 0..507 |
 
-Before connecting a GUI Save command to erase/program, establish the backing
-mapping and boot validation behavior from bootloader evidence (or an equivalent
-verified reference). A wrong mapping could erase unrelated data; changing
-checksummed image bytes could prevent booting even with the right mapping.
-Do not guess a physical offset, silently use stock user storage, or test these
-assumptions by flashing and relying on manual recovery.
+Unused sensors are zero. Bounds must have at least 512 counts of range and
+lie within the valid ADC domain. Layout identity must match.
 
-Then implement the bounded SDK flash adapter, interrupted-save recovery,
-readback verification, boot-time loading, scan/USB-safe write scheduling, and
-GUI acknowledgments. Until those are complete, the GUI continues to operate
-with RAM configuration and its existing host JSON import/export.
+Boot reads both pages and selects the newest valid matching generation,
+including uint32 rollover. No boot-time erase/program occurs. Without a valid
+record, existing factory-derived endpoint behavior remains in use.
 
-## Build
+A complete calibration writes only the inactive page, leaving the prior
+record untouched. Before erase, the target must read successfully and be
+entirely FF or carry our recognizable HKC1 ownership header. Unknown contents
+or ECC errors cause a save failure, not an erase. A recognizable torn record
+may be replaced. An unreadable page after an interrupted erase is not
+automatically reclaimed; the previous readable record can still load.
 
+The full page is erased, programmed, read back and compared byte for byte,
+including CRC, before RAM endpoints and the active generation are updated.
+Power failure during the first save can leave no valid record, in which case
+factory-derived endpoints are used. After an existing valid save, interrupted
+inactive-page writes leave the older valid record available. This is a
+software-level recovery design, not a claim that power-cut silicon testing
+has been performed.
+
+## Controller boundary
+
+The application uses NXP SDK register definitions/status codes and the
+controller sequence established by the original working application:
+command 4 erases one page, 32 command-8 loads populate its buffer, and command
+12 programs it. Status polling is bounded; a controller timeout latches out
+further commands. Interrupt state is preserved, cache is flushed, and the
+existing watchdog is serviced before/after operations. Code and stack execute
+from RAM. SDK ROM-wrapper calls are excluded; the controller adapter is
+checked against original ARM register transactions.
+
+The adapter accepts a slot number, never an arbitrary write address.
+Invalid slot, geometry, clock or record rejects before erase. CDC exposes no
+raw erase/program command. Only completing every key in calibration can save.
+
+The original 1 KiB reservation at image offsets 0x1fc00/0x1fe00 remains FF.
+Although readback establishes physical application base 0x8000, we do not
+modify its image/checksum bytes for persistence. Bootloader, factory/security,
+secondary ASIC and the serial-number pages remain outside write scope.
+
+## Validation
+
+```sh
+cmake --preset host-tests
+cmake --build --preset host-tests
+ctest --preset host-tests
+cmake --preset keyboard-calibration-parallel
+cmake --build --preset keyboard-calibration-parallel
+# Optional offline ARM dependencies and original reference required:
+python3 -B tools/test_calibration_arm.py \
+  build-keyboard-calibration-parallel/huntsman_firmware.elf --reference /path/to/original.bin
 ```
-cmake --preset keyboard-storage-layout
-cmake --build --preset keyboard-storage-layout
-python3 -B tools/test_image_reservation.py
-```
 
-Use this new directory; preserve earlier flashed and unflashed artifacts.
+Native tests cover simultaneous 61/62/65-key holds at 8 kHz, independent
+movement/release, timing, layouts, rollover, noise, cancellation, CRC damage,
+unexpected page contents, error handling and all 512 byte-cut points in an
+interrupted inactive-page write. ARM tests compare exact register writes with
+executed original erase/program instructions, then exercise compiled Fn+C,
+CDC commands, complete sequential and parallel simulated 61-key acquisition,
+save and reboot loading.
+These tests never access the real keyboard. See [calibration operation](CALIBRATION.md)
+for physical validation status and limitations.
 
-Validation on 2026-09-05: the new ARM build and all six host test suites passed.
-The application load remains 56544 bytes, SRAMX use 22280 bytes and USB SRAM
-use 15488 bytes. The binary is byte-for-byte identical to the preserved,
-unflashed `keyboard-velocity-float` candidate: SHA-256
-`cf89ed23cf9caee38ca7583402497f12e36e824010022cc69731dda2bc33f6f9`.
-The reservation changes linker constraints, not current runtime behavior.
+A complete physical 61-key run saved generation 1 in slot A;
+independent two-pass readback and record CRC validation succeeded. Slot B was
+still blank. The per-device endpoint export is intentionally not committed.

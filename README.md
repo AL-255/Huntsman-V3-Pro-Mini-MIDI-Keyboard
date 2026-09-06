@@ -4,11 +4,18 @@ An independent LPC5528 application for the Razer Huntsman V3 Pro Mini, using
 the official NXP MCUXpresso USB and peripheral drivers. It retains the
 existing bootloader and computer-initiated application updater.
 
-**Current firmware: `keyboard-midi`, flashed once with explicit authorization
-on 2026-09-05.** The application returned at USB high speed with keyboard, MIDI
-and CDC drivers bound. Offline MIDI/scan/GUI tests passed; physical playing,
-visible mode indicators and DAW aftertouch still require a player check.
+**Current installed image: `keyboard-calibration-parallel`.** It includes the
+43-note C4–B6 mapping, four-interval velocity pop filter, octave blink indicators
+and a read-only CDC flash dumper. Installed and hardware-checked on 2026-09-05;
+the application flash readback matches the build exactly. Bootloader readback
+is partial (its first 304 bytes return ECC errors); stock configuration backup
+is complete. See [private flash acquisition](docs/FLASH_DUMP.md).
 No build or test command below flashes hardware.
+The firmware supports simultaneous independent key holds during Fn+C /
+GUI calibration. Persistence remains restricted to the two verified unused
+tail pages, preserving serial-number storage. A complete user-operated 61-key
+calibration has been saved and independently retrieved as generation 1, with
+valid CRC and two matching reads. See [the documentation guide](docs/README.md).
 
 ## Use the keyboard
 
@@ -25,6 +32,9 @@ is not required for keyboard or MIDI operation.
   their white, travel-proportional lighting.
 - In MIDI mode, **left Ctrl lowers the octave** and **left Alt raises it**.
   These act once per press. Existing held notes keep their original pitch.
+  Left Ctrl blinks amber for a negative shift; Left Alt blinks amber for a
+  positive shift. Larger shifts blink faster, from a 1.2-second cycle at ±1
+  to a 0.12-second cycle at ±10. Zero shift restores normal travel lighting.
 - MIDI uses **channel 1**, Note On/Off, strike velocity and independent
   **polyphonic key pressure (aftertouch)**. Ordinary HID typing is suppressed
   in MIDI mode. Connect the keyboard's MIDI input to a software instrument
@@ -34,24 +44,38 @@ is not required for keyboard or MIDI operation.
 
 MIDI note names in this project use **C0 = note 12; C4 = note 60**. Some music
 applications display different octave labels for the same MIDI number.
-The requested octave jumps in the default mapping are intentional:
+The default mapping is:
 
 | Keyboard | MIDI note | Number | Keyboard | MIDI note | Number |
 | --- | --- | ---: | --- | --- | ---: |
-| Tab | C0 | 12 | 1 | C#0 | 13 |
-| Q | D0 | 14 | 2 | Eb0 | 15 |
-| W | E0 | 16 | 4 | F#0 | 18 |
-| E | F0 | 17 | 5 | Ab1 | 32 |
-| R | G0 | 19 | 6 | Bb1 | 34 |
-| T | A1 | 33 | 8 | C#1 | 25 |
-| Y | B1 | 35 | 9 | Eb1 | 27 |
-| U | C1 | 24 | - | F#1 | 30 |
-| I | D1 | 26 | = | Ab2 | 44 |
-| O | E1 | 28 | Backspace | Bb2 | 46 |
-| P | F1 | 29 | left Ctrl | octave − | — |
-| [ | G1 | 31 | left Alt | octave + | — |
-| ] | A2 | 45 | | | |
-| Backslash | B2 | 47 | | | |
+| Tab | C5 | 72 | Left Shift | C4 | 60 |
+| 1 | C#5 | 73 | A | C#4 | 61 |
+| Q | D5 | 74 | Z | D4 | 62 |
+| 2 | D#5 | 75 | S | D#4 | 63 |
+| W | E5 | 76 | X | E4 | 64 |
+| E | F5 | 77 | C | F4 | 65 |
+| 4 | F#5 | 78 | F | F#4 | 66 |
+| R | G5 | 79 | V | G4 | 67 |
+| 5 | G#5 | 80 | G | G#4 | 68 |
+| T | A5 | 81 | B | A4 | 69 |
+| 6 | A#5 | 82 | H | A#4 | 70 |
+| Y | B5 | 83 | N | B4 | 71 |
+| U | C6 | 84 | M | C5 | 72 |
+| 8 | C#6 | 85 | K | C#5 | 73 |
+| I | D6 | 86 | , | D5 | 74 |
+| 9 | D#6 | 87 | L | D#5 | 75 |
+| O | E6 | 88 | . | E5 | 76 |
+| P | F6 | 89 | / | F5 | 77 |
+| - | F#6 | 90 | ' | F#5 | 78 |
+| [ | G6 | 91 | left Ctrl | octave − | — |
+| = | G#6 | 92 | left Alt | octave + | — |
+| ] | A6 | 93 | | | |
+| Backspace | A#6 | 94 | | | |
+| Backslash | B6 | 95 | | | |
+
+Left Shift remains a normal modifier in keyboard mode. All mappings remain
+GUI-editable except Fn and the octave controls. Loading a JSON profile
+can overwrite these defaults with that profile's saved mappings.
 
 ## Configuration GUI
 
@@ -79,11 +103,20 @@ octave and device-confirmed settings.
   and velocity calculations continue. Configuration edits release output and
   require a fresh neutral frame before input resumes.
 
-**Settings are RAM-only. Saving to device flash is not implemented.** A 1 KiB
-area is reserved inside our application image, but physical flash mapping and
-bootloader integrity checks remain unresolved. Stock settings, macros,
-calibration and factory data are untouched. A reboot restores our defaults.
-See [storage status](docs/DEVICE_CONFIG_STORAGE.md).
+**Calibration endpoints save to the device; thresholds and MIDI mappings
+remain RAM-only.** In keyboard mode use **Fn+C** or the GUI's **Calibrate keys
+→ device flash** button. Release all keys; wait 500 ms (purple → blue), then
+fully press and hold blue keys for one second until green. Multiple keys can
+be held together; moving/releasing one does not reset the others. Green keys
+may stay held while you calibrate the rest. Include Fn and modifiers. Five seconds
+of inactivity or GUI cancellation discards the attempt. Completion saves all
+endpoints; the GUI shows progress and saved generation.
+
+Only pages **0x7d400 and 0x7d600**, independently verified unused and FF-filled,
+are write targets. Serial-number/primary settings pages are never erased.
+The application-image reservation remains unused. Returning to stock may
+reclaim the tail space and discard custom calibration.
+See [calibration instructions](docs/CALIBRATION.md) and [storage design](docs/DEVICE_CONFIG_STORAGE.md).
 
 Close other serial monitors before connecting; only one tool should own CDC.
 Use your system's serial-port permissions rather than running the GUI as root.
@@ -106,16 +139,16 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 
-cmake --preset keyboard-midi
-cmake --build --preset keyboard-midi
+cmake --preset keyboard-calibration-parallel
+cmake --build --preset keyboard-calibration-parallel
 ```
 
-Outputs in `build-keyboard-midi/`: `huntsman_firmware.elf`, `.hex` and
+Outputs in `build-keyboard-calibration-parallel/`: `huntsman_firmware.elf`, `.hex` and
 `.bin`. The binary is exactly **131072 bytes**. The linker and post-build
 validator enforce application/config boundaries, vectors and USB descriptors.
 
-**Use `keyboard-midi`, not `firmware`, for the complete application.**
-The historical `firmware` preset is intentionally USB-only.
+**Use `keyboard-calibration-parallel`, not `firmware`, for the complete application.**
+The `firmware` preset is intentionally USB-only.
 See [clean builds, dependencies and testing](docs/BUILDING.md).
 
 ## Scan/debug tools
@@ -136,26 +169,35 @@ Selecting a CDC display does not select keyboard/MIDI performance mode.
 ## Design and validation
 
 - [MIDI state machine, encoding, timing, safety and tradeoffs](docs/MIDI_DESIGN.md)
-- [HKG4 telemetry, command acknowledgments and profile format](docs/MIDI_PROTOCOL.md)
+- [MIDI mapping and interval pop-filter behavior](docs/MIDI_FILTER.md)
+- [HKG6 telemetry, command acknowledgments and profile format](docs/MIDI_PROTOCOL.md)
+- [Parallel calibration and its physical save/readback record](docs/CALIBRATION.md)
+- [Tail-page storage and serial-number protection](docs/DEVICE_CONFIG_STORAGE.md)
 - [Build and test instructions](docs/BUILDING.md)
 - [Optical/keyboard recovery](docs/KEYBOARD_RECOVERY.md)
 - [Travel lighting and calibration limitations](docs/TRAVEL_LIGHTING.md)
 - [Independent velocity registration](docs/KEY_VELOCITY.md) and
   [firmware normalization](docs/NORMALIZED_VELOCITY.md)
-- [Earlier hardware checkpoints](docs/HARDWARE_HISTORY.md)
+- [USB integration and safety](docs/USB_DESIGN.md)
 - [SDK source origins and licenses](third_party/ORIGINS.md)
 
+Velocity forms four signed differences from five post-trigger samples,
+discards the interval furthest from their median, and averages the other three
+before firmware-side 0…1 normalization. Ties discard the earliest interval.
+The host capture tool uses the same estimator and prints fractional counts/s.
+See [filter details and limitations](docs/MIDI_FILTER.md).
+
 Velocity assumes **8000 scans/s**, as requested; this is not proof of an actual
-8 kHz hardware readback rate. An earlier full-stream hardware measurement was
-about 1.60 kHz. Five actual subsequent samples are always used, so real elapsed
+8 kHz hardware readback rate. Five actual subsequent samples are always used,
+so real elapsed
 latency and the velocity scale depend on the actual scan cadence. Aftertouch
 is normalized optical travel, not a calibrated force measurement.
 
 Offline tests exercise C logic, Tk with a simulated CDC device, and the linked
 ARM USB/scan/lighting paths with synthetic hardware replies. They do not prove
 electrical behavior, physical LED colors, real-time throughput, DAW integration
-or complete hardware recovery. See [the MIDI validation record](docs/MIDI_VALIDATION.md)
-for the exact flashed hash and the limited live checks.
+or complete hardware recovery. See [current validation](docs/CALIBRATION.md)
+for the installed hash, live checks and remaining verification limits.
 
 ## Updating and safety
 
@@ -165,9 +207,11 @@ The USB composite device exposes NKRO HID, USB-MIDI, CDC ACM and the existing
 hardware update. Do not use a generic programmer at address zero or treat the
 RAM execution address `0x20000000` as a physical flash address.
 
-Do not modify the bootloader, stock configuration/factory regions or secondary
-optical-controller firmware. Manual bootloader recovery is expensive and is
+Do not modify the bootloader, serial-number/primary settings, factory/security
+regions or secondary optical-controller firmware. Calibration owns only the
+two documented tail pages; there is no arbitrary flash-write command.
+Manual bootloader recovery is expensive and is
 not a test strategy. The original extraction remains read-only and is not
-distributed in this repository; historical address references in design notes
+distributed in this repository; original-firmware address references in design notes
 are evidence, not flash-write targets. Application code is GPL-2.0; vendored
 SDK files retain their upstream licenses.

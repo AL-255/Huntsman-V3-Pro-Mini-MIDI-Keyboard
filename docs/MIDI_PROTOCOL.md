@@ -16,7 +16,7 @@ four-byte USB-MIDI event packets on cable 0, MIDI channel 1:
 
 This is MIDI 1.0, not MIDI 2.0 UMP, MPE, channel pressure or raw UART MIDI.
 Note names are a GUI convention: C0=12, middle C/C4=60. Flat spellings are
-accepted and displayed where appropriate. Inbound MIDI packets are received
+accepted; the GUI displays sharps to match the revised default mapping. Inbound MIDI packets are received
 and the existing OUT endpoint is rearmed, but they do not control this
 application's synth, mapping or lights. There is no built-in synthesizer.
 
@@ -33,6 +33,8 @@ cfg set ID SENSOR PRESS RELEASE
 cfg all ID PRESS RELEASE
 cfg enable ID 0_OR_1
 cfg midi ID SENSOR NOTE
+cfg calibrate ID
+cfg calcancel ID
 ```
 
 `cfg midi` accepts 0…127 or 255 (unmapped). It rejects unsupported sensor
@@ -43,8 +45,12 @@ snapshot contains the exact new value; the GUI checks both ACK and readback.
 
 `cfg enable` governs HID and MIDI performance output, not raw scanning or the
 velocity monitor. Threshold edits and all-key application retain their existing
-Schmitt validation and neutral-arming rules. These commands never write flash,
-enter the bootloader or reset the MCU. There is no device-save command.
+Schmitt validation and neutral-arming rules. Threshold/mapping/enable edits do
+not write flash, enter the bootloader or reset the MCU. `cfg calibrate` starts
+the keyboard-mode calibration routine; only completion of all keys saves
+endpoints to the two authorized tail pages. Its ACK means accepted, not saved.
+`cfg calcancel` discards the staged attempt. While calibrating, other config
+edits are rejected; `cfg get` remains available. See [calibration](CALIBRATION.md).
 
 The GUI allows one outstanding command, with a 3 s ACK timeout and no automatic
 retry. Rejection, mismatched readback, malformed telemetry or stale/disconnected
@@ -53,16 +59,20 @@ not atomic across all commands: already acknowledged changes remain if a later
 command fails, and output may remain disabled. Reconnect and inspect the device
 before deciding whether to apply again.
 
-## HKG4 telemetry
+## HKG6 telemetry
+
+Current calibration firmware emits HKG6, including MIDI fields, calibration
+status and per-key parallel-hold bits. See [calibration protocol](CALIBRATION.md). The decoder
+continues to accept older packet versions.
 
 1152-byte, little-endian, latest-only snapshots, no faster than one per 33 ms.
-HKG4 extends the HKG3 layout without moving the sensor or velocity arrays:
+HKG6 uses this layout:
 
 | Offset | Encoding | Meaning |
 | ---: | --- | --- |
-| 0 | 4 bytes | `HKG4` |
+| 0 | 4 bytes | `HKG6` |
 | 4 | u16 | 1152 |
-| 6 | u8 | version 4 |
+| 6 | u8 | version 6 |
 | 7, 8 | u8 each | profile 0…3, count 0/61/62/65 |
 | 9 | u8 flags | enabled=1, armed=2, valid=4, scan fault=8, LED fault=16, Fn held=32 |
 | 10 | u8 | last result: initial=0, success=1, rejected=2 |
@@ -78,7 +88,7 @@ HKG4 extends the HKG3 layout without moving the sensor or velocity arrays:
 | 431 | 16 bytes | last accepted NKRO USB report |
 | 447 | 65 × float32 | normalized device velocity, 0…1 |
 | 707 | 65 × u32 | completed velocity fit counts |
-| 967 | 65 × u8 | velocity state: ready=1, valid=2, pending=4 |
+| 967 | 65 × u8 | velocity ready=1, valid=2, pending=4; calibration hold active=8 |
 | 1032 | u8 | performance mode: keyboard=0, MIDI=1 |
 | 1033 | i8 | octave offset −10…+10 |
 | 1034 | u8 | MIDI channel, currently always 1 |
@@ -87,19 +97,21 @@ HKG4 extends the HKG3 layout without moving the sensor or velocity arrays:
 | 1101 | 3 bytes | zero padding |
 | 1104 | u32 | MIDI queue-overflow count |
 | 1108 | u32 | performance-mode change count |
-| 1112 | 36 bytes | zero padding |
+| 1112 | 36 bytes | [calibration state, completion bitmap, generation/error and reserved bytes](CALIBRATION.md#gui-protocol) |
 | 1148 | u32 | sum of the preceding 574 little-endian u16 words |
 
 Unused sensor slots are zero, including MIDI mapping padding; **active** unmapped
 sensor slots are 255. This checksum detects framing errors, not authentication.
 The decoder validates size/version pairs, reserved bytes, value ranges and
 padding. The GUI reads legacy HKG1/480-byte and HKG2/HKG3/1088-byte snapshots as
-well; MIDI controls stay disabled on those older firmware versions. Old GUIs
-that know only HKG3 need updating before connecting to HKG4 firmware.
+well; MIDI controls stay disabled on those older firmware versions. HKG4/HKG5
+are also accepted. Update older GUIs before connecting to HKG6 firmware.
 
-HKG4 velocity is float32 as in HKG3. HKG2 alone used signed integer counts/s;
+HKG3 through HKG6 velocity is float32. HKG2 alone used signed integer counts/s;
 the host does not reinterpret old integers as normalized floats. Pressure is
-transmitted over MIDI, not duplicated as another HKG4 sensor array.
+transmitted over MIDI, not duplicated as another GUI sensor array. The armed
+flag reflects the raw engine; calibration can suppress HID despite that flag.
+Use calibration state and the last submitted report to interpret output.
 
 ## Host JSON
 
@@ -114,6 +126,7 @@ The surrounding object has `version: 2`, `layout: "ansi"`, and `keys` containing
 all 61 unique, correctly labelled sensors. Notes are 0…127 or 255; reserved
 control keys must use 255. Invalid pairs, boolean numeric fields, duplicates,
 wrong labels, missing entries and invalid MIDI values are rejected before
-commands are queued. A version-2 file requires HKG4 firmware. Importing a
-version-1 file leaves MIDI mappings unchanged. Mode and octave are transient
-performance state and are not imported/exported.
+commands are queued. Importing a version-1 file leaves MIDI mappings unchanged.
+The current firmware supports version-2 JSON. Mode and octave are transient
+performance state; calibration
+records are separate. Neither is part of the host threshold/mapping profile.

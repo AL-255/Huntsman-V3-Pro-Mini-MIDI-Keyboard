@@ -6,7 +6,7 @@ import re
 from scan_bars import sensor_labels
 
 SIZE = 1152
-MAGICS = (b'HKG1',b'HKG2',b'HKG3',b'HKG4')
+MAGICS = (b'HKG1',b'HKG2',b'HKG3',b'HKG4',b'HKG5',b'HKG6')
 
 
 @dataclass(frozen=True)
@@ -36,19 +36,31 @@ class Snapshot:
     midi_cleanup: bool = False
     midi_errors: int = 0
     mode_changes: int = 0
+    calibration_state: int = 0
+    calibration_completed: int = 0
+    calibration_selected: int = 255
+    calibration_flags: int = 0
+    calibration_hold: int = 0
+    calibration_idle: int = 0
+    calibration_done: tuple = ()
+    calibration_reason: int = 0
+    calibration_upper: int = 0
+    calibration_lower: int = 0
+    calibration_generation: int = 0
+    calibration_error: int = 0
 
 
 def decode(data):
     if len(data) not in (480,1088,SIZE) or data[:4] not in MAGICS:
         raise ValueError('bad GUI frame size/magic')
     size, version, profile, count, flags, result, mode = struct.unpack_from('<H6B',data,4)
-    if (bytes(data[:4]),version,size) not in ((b'HKG1',1,480),(b'HKG2',2,1088),(b'HKG3',3,1088),(b'HKG4',4,SIZE)) or len(data) != size or mode > 2 or flags & ~63 or result > 2:
+    if (bytes(data[:4]),version,size) not in ((b'HKG1',1,480),(b'HKG2',2,1088),(b'HKG3',3,1088),(b'HKG4',4,SIZE),(b'HKG5',5,SIZE),(b'HKG6',6,SIZE)) or len(data) != size or mode > 2 or flags & ~63 or result > 2:
         raise ValueError('unsupported GUI header')
     if (profile,count) not in ((0,0),(1,61),(2,62),(3,65)):
         raise ValueError('invalid GUI layout')
     if sum(struct.unpack_from(f'<{(size-4)//2}H',data)) & 0xffffffff != struct.unpack_from('<I',data,size-4)[0]:
         raise ValueError('GUI checksum mismatch')
-    padding = data[447:476] if version == 1 else data[1032:1084] if version < 4 else data[1101:1104]+data[1112:1148]
+    padding = data[447:476] if version == 1 else data[1032:1084] if version < 4 else data[1101:1104]+(data[1112:1148] if version == 4 else data[1134:1136]+data[1144:1148])
     if any(padding) or data[430] & 0xfe:
         raise ValueError('invalid GUI padding')
     sequence,revision,ack,scan_errors,light_errors = struct.unpack_from('<5I',data,12)
@@ -69,21 +81,38 @@ def decode(data):
         if any(velocity[count:]) or any(captures[count:]) or any(states[count:]):
             raise ValueError('invalid velocity padding')
         invalid_values = any(not math.isfinite(v) or not 0.0 <= v <= 1.0 for v in velocity) if version >= 3 else any(abs(v) > 9828000 for v in velocity)
-        if any(s & ~7 for s in states) or invalid_values:
+        if any(s & ~(15 if version >= 6 else 7) for s in states) or invalid_values:
             raise ValueError('invalid velocity data')
         velocity,captures,states = velocity[:count],captures[:count],states[:count]
     performance_mode = octave = errors = changes = 0
     mapping = (); cleanup = False
-    if version == 4:
+    if version >= 4:
         performance_mode,octave,channel,cleanup = struct.unpack_from('<BbBB',data,1032)
         mapping = tuple(data[1036:1036+count])
         if performance_mode > 1 or not -10 <= octave <= 10 or channel != 1 or cleanup > 1 or any(data[1036+count:1101]):
             raise ValueError('invalid MIDI state')
         if any(n > 127 and n != 255 for n in mapping): raise ValueError('invalid MIDI mapping')
         errors,changes = struct.unpack_from('<II',data,1104)
+    cal = {}
+    if version >= 5:
+        state,completed,selected,cflags,hold,idle = struct.unpack_from('<4BHH',data,1112)
+        done = int.from_bytes(data[1120:1129],'little')
+        reason = data[1129]
+        upper,lower = struct.unpack_from('<HH',data,1130)
+        generation,error = struct.unpack_from('<II',data,1136)
+        if (state > 8 or completed > count or selected != 255 and selected >= count or
+            cflags & ~7 or bool(cflags & 1) != (1 <= state <= 5) or hold > 1000 or idle > 5000 or
+            done >> count or done.bit_count() != completed or reason > 4 or upper > 4096 or lower > 4096):
+            raise ValueError('invalid calibration state')
+        if version >= 6 and any(v & 8 and (state != 3 or done & (1<<i)) for i,v in enumerate(states)):
+            raise ValueError('invalid calibration hold bitmap')
+        cal = dict(calibration_state=state,calibration_completed=completed,calibration_selected=selected,
+                   calibration_flags=cflags,calibration_hold=hold,calibration_idle=idle,
+                   calibration_done=tuple(bool(done & (1<<i)) for i in range(count)),calibration_reason=reason,
+                   calibration_upper=upper,calibration_lower=lower,calibration_generation=generation,calibration_error=error)
     return Snapshot(profile,count,flags,result,sequence,revision,ack,scan_errors,light_errors,
                     raw,press,release,tuple(bool(bits & (1<<i)) for i in range(count)),bytes(data[431:447]),mode,
-                    velocity,captures,states,version,performance_mode,octave,mapping,bool(cleanup),errors,changes)
+                    velocity,captures,states,version,performance_mode,octave,mapping,bool(cleanup),errors,changes,**cal)
 
 
 class Decoder:
@@ -180,7 +209,7 @@ def validate_profile(data):
 
 
 def note_name(note):
-    return 'Off' if note == 255 else f'{("C","C#","D","Eb","E","F","F#","G","Ab","A","Bb","B")[note%12]}{note//12-1}'
+    return 'Off' if note == 255 else f'{("C","C#","D","D#","E","F","F#","G","G#","A","A#","B")[note%12]}{note//12-1}'
 
 
 def parse_note(text):

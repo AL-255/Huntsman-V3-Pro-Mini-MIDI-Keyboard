@@ -35,36 +35,46 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 
-cmake --preset keyboard-midi
-cmake --build --preset keyboard-midi
+cmake --preset keyboard-calibration-parallel
+cmake --build --preset keyboard-calibration-parallel
 ```
 
 The ARM toolchain file is `cmake/arm-none-eabi.cmake`; no IDE-generated project
-is necessary. `keyboard-midi` inherits the recovered scan/lighting application
-and enables standalone keyboard mode. `firmware` is a historical USB-only
-bring-up preset and does **not** enable MIDI performance or automatic scanning.
-Older preset names use the current source, not immutable historical revisions;
-use git commits to reproduce source versions and preserve existing flashed
-build directories when testing new changes.
+is necessary. `keyboard-calibration-parallel` inherits the recovered scan/lighting application
+and enables standalone keyboard mode. `firmware` is a USB-only diagnostic
+preset and does **not** enable MIDI performance or automatic scanning.
+Use `keyboard-calibration-parallel` for the complete application.
 
-Artifacts in `build-keyboard-midi`:
+Artifacts in `build-keyboard-calibration-parallel`:
 
 - `huntsman_firmware.elf`: debug symbols, linked ARM instructions and memory map.
 - `huntsman_firmware.hex`: addressed Intel HEX.
 - `huntsman_firmware.bin`: exactly 131072 bytes, with FF padding through the
   original updater-image boundary.
 
-The linker reserves 127 KiB for code/initialized data and 1 KiB for future
-application-owned configuration. These are RAM execution-image addresses, not
-verified physical flash addresses. Post-build checks enforce the reservation,
-blank new configuration slots, reset/stack bounds, USB VID/PID, interface order,
+The linker reserves 127 KiB for code/initialized data and 1 KiB for an unused
+application-image configuration reservation. These are RAM execution-image
+addresses; controller readback established physical application base 0x8000.
+Calibration's 1324-byte per-key state is writable RAM inside the image region,
+explicitly initialized at startup. Persistent records instead use only the
+verified FF tail pages 0x7d400 and 0x7d600. Post-build checks enforce the reservation,
+blank application-image reservation, reset/stack bounds, USB VID/PID, interface order,
 endpoint layout, strings and HID descriptors. They do not validate an actual
 bootloader's flash mapping or authorize flashing.
 
+A clean export of the tracked source builds without the updater, extraction
+or private device data. With the tested toolchain, its binary matches the
+[installed image](CALIBRATION.md#validation-status) byte for byte, and all nine
+native suites pass. Newlib may emit linker warnings about unimplemented
+`_close`, `_lseek`, `_read` and `_write`; those functions are absent from the
+final linked image after garbage collection. CDC debug output uses the
+application's USB transport, not libc file I/O.
+
 ## Tests that need no original firmware or device
 
-The seven CTest suites cover core logic, raw keyboard/velocity, MIDI state,
-GUI model/PTY transport, image reservation, scan display and compact captures.
+The nine CTest suites cover core logic, raw keyboard/velocity, MIDI state,
+parallel calibration/storage, GUI model/PTY transport, image reservation,
+scan display, compact captures and flash-dump framing.
 Neither the updater EXE nor proprietary extracted firmware is needed for
 these tests or the application build.
 
@@ -74,7 +84,7 @@ For linked-ARM USB tests:
 python3 -m venv .venv-audit
 . .venv-audit/bin/activate
 python3 -m pip install -r tools/requirements-audit.txt
-cmake --build --preset keyboard-midi --target audit-usb
+cmake --build --preset keyboard-calibration-parallel --target audit-usb
 ```
 
 Pinned optional dependencies are Unicorn 2.1.4 and pyelftools 0.33. The USB
@@ -100,10 +110,11 @@ sibling path `../extracted_firmware/raw/Talia_T1_60%_7203_App_FW_v2.1.0_E888780F
 To select another read-only location:
 
 ```sh
-cmake --preset keyboard-midi \
+cmake --preset keyboard-calibration-parallel \
   -DHUNTSMAN_PRODUCTION_REFERENCE=/absolute/path/to/primary-app.bin
-cmake --build --preset keyboard-midi --target audit-keyboard
-cmake --build --preset keyboard-midi --target audit-lighting
+cmake --build --preset keyboard-calibration-parallel --target audit-keyboard
+cmake --build --preset keyboard-calibration-parallel --target audit-lighting
+cmake --build --preset keyboard-calibration-parallel --target audit-calibration
 ```
 
 These execute compiled ARM scan/MIDI/LED paths using synthetic optical replies
@@ -120,8 +131,9 @@ operating system's serial-access group/device permissions, and close other
 monitors before connecting. The GUI takes an exclusive advisory lock and does
 not steal a port from another owner. Its transport is Linux/POSIX-specific.
 
-If telemetry rejects the new header, update the GUI to support HKG4. MIDI
-mapping controls are disabled on older HKG1–HKG3 devices. If waiting for neutral,
+If telemetry rejects the new header, update the GUI to support HKG6. MIDI
+mapping requires HKG4 or later, calibration controls HKG5 or later, and parallel
+hold indicators HKG6. The current decoder accepts all six versions. If waiting for neutral,
 release every key; inspect threshold/raw values without repeatedly resetting
 the keyboard. A MIDI cleanup-pending indicator means the host has not yet
 accepted all cleanup events. It does not prevent switching back to HID mode.
@@ -131,7 +143,9 @@ accepted all cleanup events. It does not prevent switching back to HID mode.
 No build/test target flashes or resets hardware. Use only the supplied updater's
 reviewed application-only path after explicit authorization and record the exact
 binary hash. The updater is a separate sibling project, not bundled here.
-Do not overwrite bootloader, factory/calibration, stock settings or secondary
-controller regions, and do not use manual forced bootloader recovery as a
-routine test. The recorded single application update is complete; physical
-MIDI/DAW playing validation remains outstanding. No further flash is implied.
+Do not overwrite bootloader, factory/security data, primary stock settings or
+secondary-controller regions. Calibration writes only its two documented tail
+pages. Do not use manual forced bootloader recovery as a
+routine test. Application updates are authorized for this device; that does
+not authorize writes outside the application and documented calibration slots.
+Build validation does not establish comprehensive MIDI/DAW compatibility.

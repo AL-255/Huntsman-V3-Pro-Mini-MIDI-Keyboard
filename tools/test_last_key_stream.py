@@ -20,7 +20,7 @@ SCRIPT = str(Path(__file__).with_name('decode_scan_stream.py'))
 
 
 def velocity_line(value):
-    return f'Velocity: {value:+d} raw counts/s (first 5-point linear fit; assumed 8000 Hz; positive=press)\n'.encode()
+    return f'Velocity: {value:+.3f} raw counts/s (4 intervals, discard 1 outlier, average 3; assumed 8000 Hz; positive=press)\n'.encode()
 
 
 def packet(seq, raw=3799, key=3, flags=None, threshold=3800, session=123):
@@ -48,8 +48,19 @@ class LastKeyTests(unittest.TestCase):
         self.assertEqual(press_velocity([3500,3490,3480,3470,3460]),80000)
         self.assertEqual(press_velocity([3460,3470,3480,3490,3500]),-80000)
         self.assertEqual(press_velocity([3500]*5),0)
-        self.assertEqual(press_velocity([3500,3403,3298,3204,3099]),800800)
+        self.assertAlmostEqual(press_velocity([3500,3403,3298,3204,3099]),307*8000/3)
         with self.assertRaises(ValueError): press_velocity([1,2,3,4])
+
+    def test_velocity_pop_filter(self):
+        for index in range(4):
+            for spike in (-1000,1000):
+                intervals=[10]*4; intervals[index]=spike
+                samples=[2000]
+                for delta in intervals: samples.append(samples[-1]-delta)
+                self.assertEqual(press_velocity(samples),80000)
+        self.assertEqual(press_velocity([3000,3000,2990,2970,2940]),160000)
+        self.assertEqual(press_velocity([3000,2970,2950,2940,2940]),80000)
+        self.assertAlmostEqual(press_velocity([3000,2999,2998,2996,2976]),32000/3)
         raw = [3500,3490,3480,3470,3460] + [1000]*15
         data = packet(0,3599,key=32) + b''.join(packet(i+1,v,key=32) for i,v in enumerate(raw))
         result = self.cli(data)

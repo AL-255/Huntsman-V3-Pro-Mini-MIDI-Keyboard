@@ -37,6 +37,14 @@ SECTIONS
         __exidx_end = .;
     } > APP_IMAGE
 
+    /* APP_IMAGE is SRAM at runtime, not memory-mapped flash. Calibration's
+     * independent per-key registers are initialized by keyboard_live_init.
+     * Include their bytes in the ordinary updater image/load bound. */
+    .calibration_state : ALIGN(4)
+    {
+        *(.calibration_state)
+    } > APP_IMAGE
+
     .data : ALIGN(4)
     {
         __data_start__ = .;

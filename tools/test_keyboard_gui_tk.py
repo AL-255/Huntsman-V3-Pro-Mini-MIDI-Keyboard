@@ -57,7 +57,7 @@ def main():
         app.close(); root = None
         print('PASS Tk: 61-key physical geometry, click-to-select, threshold fields, disabled demo controls, resize')
         master,slave = pty.openpty()
-        device = Device(master); device.start()
+        device = Device(master,version=6); device.start()
         try:
             root = tk.Tk(); app = App(root,device=os.ttyname(slave))
             app.toggle_connection()
@@ -69,6 +69,18 @@ def main():
                     time.sleep(.01)
                 raise AssertionError('GUI condition timed out')
             pump_until(app.usable)
+            assert str(app.calibrate_button['state']) == 'normal'
+            with patch('keyboard_gui.messagebox.askyesno',return_value=True):
+                app.calibrate_button.invoke()
+            pump_until(lambda:app.snapshot.calibration_state==3)
+            assert not app.usable() and app.usable(allow_calibration=True)
+            assert str(app.apply_button['state'])=='disabled'
+            assert '0/61' in app.calibration_status.get()
+            assert 'holding 2' in app.calibration_status.get()
+            assert all(app.canvas.itemcget(app.items[i][0],'fill')=='#a96d17' for i in (0,1))
+            app.cancel_calibration_button.invoke()
+            pump_until(lambda:app.snapshot.calibration_state==7)
+            assert app.usable()
             app.select(32); app.press.set('3000'); app.release.set('3250')
             app.apply_button.invoke()
             pump_until(lambda:app.snapshot.press[32] == 3000 and app.snapshot.release[32] == 3250)
@@ -88,7 +100,7 @@ def main():
             pump_until(lambda:not app.connection.is_alive())
             assert not app.usable()
             app.close(); root = None
-            print('PASS Tk+PTY: connect, select A, apply pair/all, device-confirmed panel, disable, disconnect')
+            print('PASS Tk+PTY: calibration arm/status/disabled edits/cancel, select A, apply pair/all/MIDI, disable, disconnect')
         finally:
             device.stop_event.set(); device.join(1)
             os.close(master); os.close(slave)

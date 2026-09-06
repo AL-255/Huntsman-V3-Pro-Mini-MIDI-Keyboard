@@ -1,16 +1,15 @@
 # Whole-keyboard CDC scan stream
 
-This revision was **flashed once after explicit authorization**. High-speed USB,
-CDC commands, and quiet idle output passed. A subsequent physical test received
-61-sensor frames at approximately **1.60 kHz, not the requested 8 kHz** (details
-below). The periodic
-`USB service alive` message (called “USB service active” in the request)
-is removed from both USB-only and keyboard entry points.
+HKS1 whole-keyboard streaming is available in the complete
+`keyboard-calibration-parallel` application. No periodic USB heartbeat text
+is emitted.
 
 ## Operation
 
-ASIC initialization is still explicit: `scan start`. By default, every newly
-accepted A0 scan frame then produces one binary CDC record. No text-formatted
+Current complete firmware starts scanning automatically after USB configuration.
+Select `stream on`
+to restore HKS1 after using GUI/compact/dump modes; every newly accepted A0
+scan frame then produces one binary CDC record. No text-formatted
 per-sensor loop, normalized values, interpolation, or repeated snapshots are
 substituted for raw uint16 readbacks. Values are in ASIC sensor-index order,
 with the metadata-selected 61/62/65 count; mapping is documented in
@@ -22,7 +21,10 @@ with the metadata-selected 61/62/65 count; mapping is documented in
 - `scan stop`: stop streaming and quarantine the scanner as before.
 - Text logs/command responses are suppressed while streaming. Commands still
   execute; send `stream off` before `scan status` or other text diagnostics.
-- Host keyboard output remains independently gated by `keys on`.
+- Current host keyboard output is enabled by default and arms on neutral
+  samples; `keys off` or GUI disable suppresses output independently of streaming.
+- Wait for calibration to finish before selecting diagnostic stream modes;
+  those mode commands are rejected while calibration is active.
 
 There may be existing text/an in-flight text transfer before the first binary
 record. The decoder resynchronizes on validated frame boundaries. Once binary
@@ -39,7 +41,7 @@ USB backpressure never blocks the scanner, watchdog or main loop. Entire new
 records are dropped when the queue is full; there are no truncated records.
 Disconnect/reset/explicit stream stop also discard queued records.
 
-**The measured fresh hardware readback rate is about 1.60 kHz, not 8 kHz.** Production SPI is
+The achieved hardware scan rate is not established as 8 kHz. Production SPI is
 8 MHz. Two header bytes plus 61/62/65 uint16 samples take at least 124/126/132 µs
 on the wire, versus a 125 µs target period, before software/peripheral overhead.
 The existing CTIMER2 scheduler retains its nominal 125 µs period. No unverified
@@ -80,8 +82,8 @@ Non-A0 markers and the two production startup-discard frames are not samples.
 ## Decode and inspect
 
 For device-side selection and loss-detecting single-number output, see
-[last-key streaming](LAST_KEY_STREAM.md). It requires the newer `last-key`
-firmware; unlike the whole-keyboard display modes, it fails on data loss.
+[last-key streaming](LAST_KEY_STREAM.md), included in the current complete
+firmware; unlike whole-keyboard display modes, it fails on data loss.
 
 Capture CDC in raw mode to a binary file with a serial client. Avoid terminal
 echo and newline transformations; drain/resynchronize on opening. Then:
@@ -103,18 +105,14 @@ USB/read chunk boundaries and skips malformed records/text. Terminal rendering
 ## Build/validation
 
 ```sh
-cmake --preset scan-stream
-cmake --build --preset scan-stream
-cmake --build --preset scan-stream --target audit-keyboard
+cmake --preset keyboard-calibration-parallel
+cmake --build --preset keyboard-calibration-parallel
+cmake --build --preset keyboard-calibration-parallel --target audit-keyboard
 ```
 
 The audit uses the optional Python dependencies in `tools/requirements-audit.txt`
 and the read-only production image as described in KEYBOARD_RECOVERY.md.
-Output is `build-stream/huntsman_firmware.bin`; the existing flashed
-`build-keyboard` and USB-only `build-firmware` artifacts are preserved.
-The reviewed streaming build is 131072 bytes, SHA-256
-`64be8948ae79990a402be9dd4f10b32d94510f5d8d4f25527e35c2d4f5053466`.
-SRAMX use including heap is 18120/24576 bytes; USB SRAM remains 15488/16384.
+Current output is `build-keyboard-calibration-parallel/huntsman_firmware.bin`.
 
 Offline checks execute actual ARM CDC/USB code with a synthetic source of
 8,000 full records and four records per modeled 500 µs host-service interval.
@@ -122,62 +120,10 @@ They check all 16 sample bits, checksums, multi-packet assembly, bounded
 backpressure, whole-record loss counters, immutable in-flight data, text
 arbitration, reset recovery, and synthetic ASIC-to-CDC integration. This
 validates software framing/data flow, **not real elapsed throughput or ASIC
-rate**. The model was corrected to consume double-buffered USB packets in
-EPINUSE order; choosing the first active buffer had reordered long transfers.
-Full USB and keyboard regression audits run with the corrected model.
+rate**. The model consumes double-buffered USB packets in EPINUSE order.
+Full USB and keyboard regression audits run with the same model.
 
-## Authorized hardware flash
-
-The user subsequently requested `flash`. The exact 131072-byte hash above,
-from source commit `64330b0`, was verified before a single software update
-using the supplied updater. On the same USB port `3-2.1`, application device
-9 became bootloader device 10, then application device 11. Every program block
-was acknowledged; no readback was performed. There was no manual unplug,
-forced boot mode, retry, second flash, bootloader write or secondary update.
-
-The application enumerated at 480 Mbit/s. Keyboard, MIDI and CDC drivers bound;
-`/dev/ttyACM0` responded to status/help, including the new stream commands.
-After initial raw-terminal resynchronization, status showed `phase=0`,
-`transfers=0`, `stream_dropped=0` and `host=0`. A subsequent three-second
-idle read returned zero bytes, confirming the heartbeat was gone. No
-`scan start`, `keys on` or ASIC command was sent.
-
-Dmesg recorded bootloader enumeration at monotonic 89320.953549 and application
-enumeration at 89337.021726. The known control-only HID endpoint, MIDI fallback
-and usbfs interface-claim warnings remained; no enumeration failure appeared.
-Device number 11 remained unchanged through CDC validation. This establishes
-flash/USB/command success, not live raw sampling or an achieved 8 kHz rate.
-
-## Subsequent live CDC/ASIC test (2026-09-05)
-
-After the user reported no output, direct raw-mode reads confirmed idle CDC
-was silent and status showed `phase=0 transfers=0 frames=0`: the scanner had
-never been started. The initial flash checks did not validate the requested
-scan stream. One `scan start` was then sent, with host keystrokes kept off.
-There was no reflash, MCU reset, scanner retry or manual reconnect.
-
-The first six-second capture received 9,353 checksum-valid HKS1 records, each
-containing 61 raw uint16 values, with zero sequence gaps. Status subsequently
-reported `phase=8 profile=1 count=61 errors=0 settled=1 valid=1 calibrated=0`.
-The zero calibration count means this test does not establish recovered
-per-key calibration or physical keyboard/editor correctness.
-
-A second six-second capture received 1,544,320 bytes / 9,652 valid records,
-with zero sequence gaps and zero invalid-sample flags. The drop counter was
-unchanged throughout capture. Readback tick intervals were 5 ticks for 9,477
-adjacent pairs, 4 for 127 and 6 for 47: 1,602.66 records/s by nominal timer
-ticks. Host elapsed capture rate was 1,608.47 records/s, including buffering.
-With binary streaming disabled but acquisition still running, status counter
-deltas measured 1,605.19 frames/s. Thus disabling CDC streaming did not
-materially improve acquisition rate; the specific acquisition bottleneck is
-not yet established. Do not describe this as an 8 kHz hardware pass.
-
-Drops accumulated while no host reader was draining CDC, as expected from the
-bounded queue, and stopping the stream also discards queued records. These
-are distinct from the zero gaps/drop-counter growth during the measured
-continuous capture. USB remained application device 11 on `3-2.1`, with no
-new USB/kernel fault messages during testing. Scanner and stream were left
-enabled, host keystrokes off; this does not change the boot-time OFF default.
+## Latest-only live display
 
 The stream is binary, not terminal-readable lines. From the repository root,
 with permission to access the serial device, inspect the running stream using:
@@ -205,15 +151,7 @@ prints received/displayed counts to stderr. Ordinary file decoding without
 when a row is selected. USB/firmware buffers, an in-flight transfer and the
 terminal's own rendering have unavoidable latency; this is not a guarantee
 of the sensor state at the instant pixels appear. The existing firmware's
-transport queue is unchanged, and no firmware flash is needed for this
-host-side display change.
-
-Hardware validation of `--live --duration 3` received 4,842 records and printed
-60 rows, omitting 4,782 records from display. Adjacent displayed sequences
-jumped by 80 or 81. All rows had 61 decimal sample fields of width five;
-the firmware drop counter stayed constant during this capture. USB device
-number remained 11. The blocked-output host test independently verifies that
-100 intervening reports are replaced by the newest report, not replayed.
+transport queue can still contribute latency.
 
 ## Labelled ANSI block display
 
@@ -253,13 +191,8 @@ movement/line clearing prevent scrolling; wrapping is disabled during the
 display and restored, together with color/cursor visibility and input tty
 attributes, on normal exit or Ctrl-C. No firmware change or flash is needed.
 
-The original three-column display validation used a 200-column pseudo-terminal attached to the real CDC
-stream: 4,835 records received, 60 updates, 4,775 not displayed in three
-seconds. Replaying the cursor/erase sequences produced exactly two content
-rows with 61 aligned key/bar columns and terminal cleanup sequences. USB
-device number stayed 11. Host tests cover all three label maps, raw scale
-boundaries/invalid values, viewport resizing, repeated in-place redraws,
-layout changes and cleanup. The source tables were rechecked against the
-hash-pinned production firmware through its scatter initialization.
-The compact display tests additionally verify every label and bar occupies
-exactly two characters, with a trailing space, across all three layouts.
+Host tests cover all three label maps, raw scale boundaries, invalid values,
+viewport resizing, in-place redraws, layout changes and cleanup. They verify
+every label and bar occupies exactly two characters, including its trailing
+space. Blocked-output tests check that intervening reports are replaced by
+the latest report rather than replayed.

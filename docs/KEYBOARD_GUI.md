@@ -1,33 +1,24 @@
 # Standalone keyboard and configuration GUI
 
-Historical HKG1/HKG2 checkpoint below. Current usage is in the root README;
-the flashed `keyboard-midi` extension adds [HKG4 and MIDI mapping](MIDI_PROTOCOL.md).
-Preserve old build artifacts rather than rebuilding them with current sources.
-
-The `keyboard-gui` preset adds raw-value, per-sensor Schmitt switching to the
-existing optical/lighting application. This image was **flashed once with
-explicit authorization on 2026-09-05**; high-speed USB enumeration and the
-updater serial query passed. See hardware validation below.
-The application, GUI and tests never automatically flash or reset a device.
-
-The subsequent checkpoint added [per-key velocity and atomic apply-all](KEY_VELOCITY.md)
-in the separately built **flashed** `keyboard-velocity` image. Use that preset below
-to preserve the flashed baseline. The updated GUI remains compatible with the
-baseline, but its new velocity/apply-all features require the new firmware.
+Current firmware is `keyboard-calibration-parallel` with HKG6 telemetry:
+standalone Schmitt keyboard, MIDI, normalized per-key velocity and parallel
+calibration. The GUI supports older HKG1–5 devices with version-gated controls.
+See [current validation](CALIBRATION.md#validation-status).
+The GUI never flashes the application or enters the bootloader; completing
+calibration saves endpoints to the two authorized tail pages.
 
 ## Build and run
 
 From the repository root, using the existing pinned NXP SDK/toolchain setup:
 
 ```sh
-cmake --preset keyboard-velocity
-cmake --build --preset keyboard-velocity
+cmake --preset keyboard-calibration-parallel
+cmake --build --preset keyboard-calibration-parallel
 python3 tools/keyboard_gui.py --device /dev/ttyACM0
 ```
 
-Current candidate: `build-keyboard-velocity/huntsman_firmware.bin`, exactly 131072 bytes,
+Current application: `build-keyboard-calibration-parallel/huntsman_firmware.bin`, exactly 131072 bytes,
 linked at `0x20000000`. Original bootloader/update transport is unchanged.
-Previously flashed build directories are not rebuilt by this preset.
 
 The Linux GUI uses Python's standard library and Tk (`python3-tk` must be
 installed). No pip packages are required. Your user needs access to the CDC
@@ -37,10 +28,9 @@ GUI owns the stream while connected. It does not request root privileges.
 
 Click **Connect**, then select a drawn key. The diagram uses the recovered
 61-sensor ANSI mapping and standard 60% key positions/sizes, including the
-6.25-unit spacebar. Fn is immediately right of Space, followed by right Alt,
-as requested; their sensor IDs and threshold associations stay attached to
-their respective keys. Restart a running GUI to load this host-only layout
-change (no reflash). Each key shows its latest raw value; orange means its
+6.25-unit spacebar. Fn is immediately right of Space, followed by right Alt;
+their sensor IDs and threshold associations stay attached to
+their respective keys. Each key shows its latest raw value; orange means its
 sensor is in the down state. The selected-key panel shows thresholds read back
 from the device, a recent-value plot and the last USB-submitted NKRO report.
 An application submission is not proof that the computer received a report.
@@ -79,26 +69,37 @@ never silently retries a timed-out/rejected command.
 
 The existing FN+Tab/FN+Caps modal editors remain available, with their original
 entry/exit/event-consumption behavior. Escape exits; releasing FN alone does
-not exit. These legacy normalized settings **do not change the new per-key raw
+not exit. These normalized settings **do not change the per-key raw
 Schmitt pairs**. The GUI reports this mode explicitly. There is no invented
 conversion between the production's calibrated rapid-trigger settings and raw
 ADC counts. Consumer/media/profile actions outside the existing keyboard HID
 report implementation remain unsupported.
 
-Lighting, MIDI endpoints, CDC whole/last-key stream modes and the computer-
-initiated updater remain present. No new ASIC commands, GPIO sequencing or
-board initialization changes were introduced. This does not claim an 8 kHz
-physical scan rate: the preceding hardware image measured roughly 1.6 kHz.
+Fn+Enter toggles keyboard/MIDI mode. MIDI mapping controls use note names or
+numbers; Fn and left Ctrl/Alt are reserved controls. Per-key velocity is a
+firmware-calculated 0–1 float, with an [interval pop filter](MIDI_FILTER.md).
+**Apply thresholds to all keys** sends one atomic MCU update. The nominal
+8 kHz velocity assumption is not a measured acquisition rate.
+
+**Calibrate keys → device flash** starts the same routine as Fn+C in keyboard
+mode. Release all keys for the 500 ms rest capture, then fully hold one or more
+blue keys for one second. Each active hold is amber; completed keys are green.
+The GUI shows progress, the number being held, inactivity time, saved generation
+and errors. It disables ordinary edits during calibration; Cancel remains
+available. Completion of all keys saves, while cancellation/5 s inactivity
+discards staged results. See [calibration](CALIBRATION.md) for details.
 
 ## Profiles and persistence
 
 Thresholds and keyboard enable state are **RAM-only**. Closing the GUI leaves
 them active; unplugging/restarting restores defaults. Save/load JSON profiles
 on the computer. Nothing writes bootloader, factory calibration, ASIC firmware
-or unreviewed flash storage. Persistent on-device configuration is not included.
+or unreviewed flash storage. MIDI mappings are likewise RAM-only. Calibration
+endpoints alone persist on-device in the two documented unused tail pages.
+Host JSON profiles do not contain calibration, performance mode or octave.
 
 Load validates the entire ANSI profile before sending anything, disables
-keyboard output, applies all 61 pairs with individual readback, then restores
+keyboard output, applies all 61 pairs and any version-2 MIDI mappings with individual readback, then restores
 the preceding enable state. This is not an atomic transaction: a failure
 cancels remaining commands, leaving confirmed changes in place and normally
 leaving keyboard output disabled. Reconnect, inspect and load again explicitly.
@@ -111,6 +112,10 @@ Commands are newline-delimited ASCII; all arguments are decimal:
 stream gui
 cfg get ID
 cfg set ID SENSOR PRESS RELEASE
+cfg all ID PRESS RELEASE
+cfg midi ID SENSOR NOTE
+cfg calibrate ID
+cfg calcancel ID
 cfg enable ID 0
 cfg enable ID 1
 ```
@@ -120,38 +125,13 @@ Well-formed IDs receive result 1 (accepted) or 2 (rejected) in telemetry.
 Malformed/unparseable IDs receive no acknowledgment. Hosts must serialize
 commands and wait for matching ACKs: only the last acknowledgment is retained.
 
-The flashed baseline's `stream gui` selects latest-only binary HKG1 snapshots,
-at most one per 33 ms. The velocity candidate uses [HKG2](KEY_VELOCITY.md#telemetry).
+`stream gui` selects latest-only 1152-byte HKG6 snapshots, at most one per 33 ms.
+See [the current wire layout](MIDI_PROTOCOL.md#hkg6-telemetry) and
+[calibration fields](CALIBRATION.md#gui-protocol).
 Pending USB payloads remain immutable; only the unsent snapshot is replaced.
-Old pending stream bytes may precede the first HKG1 frame after switching.
+Old pending stream bytes may precede the first GUI frame after switching.
 The GUI resynchronizes only before its first frame, then requires valid framing
 and checksums. GUI sequence gaps are expected, unlike lossless last-key capture.
-
-Each frame is 480 bytes, little-endian:
-
-| Offset | Field |
-| --- | --- |
-| 0 | `HKG1` magic, 4 bytes |
-| 4 | uint16 size = 480 |
-| 6 | Version = 1 |
-| 7, 8 | Layout profile, sensor count |
-| 9 | Flags: enabled=1, armed=2, valid=4, scan fault=8, LED fault=16, FN=32 |
-| 10, 11 | Command result, legacy FN editor mode (0/1/2) |
-| 12 | uint32 telemetry sequence |
-| 16 | uint32 raw threshold revision |
-| 20 | uint32 last command ID |
-| 24, 28 | uint32 scan errors, LED errors |
-| 32 | 65 uint16 raw samples |
-| 162 | 65 uint16 press thresholds |
-| 292 | 65 uint16 release thresholds |
-| 422 | 9-byte sensor-down bitmap, least significant bit first |
-| 431 | Last USB-submitted 16-byte NKRO report |
-| 447 | 29 reserved zero bytes |
-| 476 | uint32 sum of the preceding 238 little-endian uint16 words |
-
-Unused array entries and bitmap bits are zero. Profile/count 0/0 indicates no
-scan layout yet. Validity must be checked separately from the retained raw
-values; a fault snapshot may contain the last received samples.
 
 ## Validation
 
@@ -160,7 +140,7 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 python3 -B tools/test_keyboard_gui_tk.py
-env PYTHONPATH=/tmp/huntsman-audit-python-deps cmake --build build-keyboard-velocity --target audit-lighting
+cmake --build --preset keyboard-calibration-parallel --target audit-lighting audit-calibration
 ```
 
 The last command includes USB, keyboard, stream and lighting ARM execution
@@ -175,24 +155,3 @@ operation, FN/keyboard actions and editor telemetry, USB-reset/invalid/timeout
 releases, USB/MIDI/updater regression, pending-USB buffer ownership, FS/HS GUI
 framing, JSON validation, PTY command acknowledgments and cancellation, and
 real Tk geometry/selection/window-resize tests.
-
-Flashed baseline SHA-256 (not the new velocity candidate):
-`bc12508f5e3e81e50f287e4f9c4fe09690312e8b6c9891953ad6b980018328ce`.
-Load image 55028 bytes; SRAMX 20232/24576 bytes; USB SRAM 15488/16384 bytes;
-separate 8 KiB stack region remains reserved.
-
-## Authorized hardware flash (2026-09-05)
-
-- One software bootloader entry and one supplied-updater `flash_app_image`
-  invocation for the SHA-256 above. All 2048 64-byte application blocks
-  acknowledged; no independent flash readback is available. No secondary,
-  factory or bootloader writes, retries, unplugging or GPIO cycling.
-- USB port `3-2.1`: application device 15 -> bootloader 16 -> application 17.
-  New application enumerated at 480 Mbit/s. Keyboard interface 0 uses
-  `usbhid`, MIDI 1/2 use `snd-usb-audio`, CDC 4/5 use `cdc_acm` (`ttyACM0`).
-- Updater serial query returned `OPENHUNTSMAN0001`. Kernel messages show the
-  expected bootloader and application transitions. The control-only updater
-  HID interface has no interrupt endpoint and remains unbound, as before.
-- The initial standalone telemetry check found the user's GUI already holding
-  the CDC advisory lock and correctly exited without competing for its data.
-  Physical press/release behavior is not established by enumeration alone.

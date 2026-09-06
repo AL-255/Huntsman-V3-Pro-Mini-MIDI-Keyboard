@@ -9,15 +9,19 @@ ASSUMED_SCAN_HZ = 8000
 
 
 def press_velocity(samples):
-    """Five-point least-squares velocity in raw counts/s, positive on press.
+    """Five samples, four signed intervals, one discarded median outlier.
 
-    Centered sample positions are -2,-1,0,1,2; sum(x*x)=10.
-    Negate the raw slope because optical readbacks decrease during a press.
-    This uses the requested fixed 8 kHz assumption, not measured USB timing.
+    The earliest interval wins equal-distance ties. Average the remaining
+    three at the assumed 8 kHz; positive means press. Matches MCU filtering,
+    before its 0..1 clamp/normalization; host output retains fractional counts/s.
     """
     if len(samples) != 5:
         raise ValueError('velocity requires exactly five readbacks')
-    return (2*samples[0] + samples[1] - samples[3] - 2*samples[4]) * (ASSUMED_SCAN_HZ // 10)
+    delta = [a-b for a,b in zip(samples,samples[1:])]
+    ordered = sorted(delta)
+    twice_median = ordered[1]+ordered[2]
+    outlier = max(range(4),key=lambda i:abs(2*delta[i]-twice_median))
+    return (sum(delta)-delta[outlier]) * ASSUMED_SCAN_HZ / 3
 
 
 class StreamError(Exception):
@@ -129,8 +133,8 @@ class KeyCapture:
         lines = [f'{value}\n']
         if self.captured == self.count:
             if len(self.first_five) == 5:
-                lines.append(f'Velocity: {press_velocity(self.first_five):+d} raw counts/s '
-                             '(first 5-point linear fit; assumed 8000 Hz; positive=press)\n')
+                lines.append(f'Velocity: {press_velocity(self.first_five):+.3f} raw counts/s '
+                             '(4 intervals, discard 1 outlier, average 3; assumed 8000 Hz; positive=press)\n')
             if self.repeat:
                 self.state = 'release'
                 if value > self.threshold: lines.append(self.rearm(value))

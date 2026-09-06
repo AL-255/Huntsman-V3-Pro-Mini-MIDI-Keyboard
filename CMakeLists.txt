@@ -30,6 +30,8 @@ set(KEYBOARD_LOGIC_SOURCES
     src/keyboard_scan.c
     src/keyboard_raw.c
     src/keyboard_midi.c
+    src/keyboard_calibration.c
+    src/calibration_store.c
     src/optical_key.c
     src/keyboard_config.c
     src/keyboard_layout.c
@@ -59,10 +61,15 @@ if(NOT HUNTSMAN_BUILD_FIRMWARE)
     target_link_libraries(keyboard_midi_tests PRIVATE huntsman_core)
     target_compile_options(keyboard_midi_tests PRIVATE -Wall -Wextra -Werror)
     add_test(NAME keyboard_midi COMMAND keyboard_midi_tests)
+    add_executable(calibration_tests tests/test_calibration.c)
+    target_link_libraries(calibration_tests PRIVATE huntsman_core)
+    target_compile_options(calibration_tests PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME calibration COMMAND calibration_tests)
     add_test(NAME keyboard_gui COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_keyboard_gui.py)
     add_test(NAME image_reservation COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_image_reservation.py)
     add_test(NAME scan_display COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_scan_display.py)
     add_test(NAME last_key_stream COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_last_key_stream.py)
+    add_test(NAME flash_dump COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_dump_flash.py)
     # Host ABI for comparison against executed production ARM instructions.
     add_library(keyboard_logic SHARED ${KEYBOARD_LOGIC_SOURCES})
     target_include_directories(keyboard_logic PUBLIC include)
@@ -133,6 +140,15 @@ if(HUNTSMAN_KEYBOARD_DIAGNOSTICS)
     target_compile_definitions(huntsman_firmware PRIVATE HUNTSMAN_KEYBOARD_DIAGNOSTICS=1)
     if(HUNTSMAN_KEYBOARD_MODE)
         target_compile_definitions(huntsman_firmware PRIVATE HUNTSMAN_KEYBOARD_MODE=1)
+        target_sources(huntsman_firmware PRIVATE src/flash_dump.c)
+        target_include_directories(huntsman_firmware PRIVATE ${NXP_DRIVERS}/iap1)
+        add_custom_target(audit-dump
+            COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_flash_dump_arm.py $<TARGET_FILE:huntsman_firmware>
+            DEPENDS huntsman_firmware USES_TERMINAL VERBATIM)
+        add_custom_target(audit-calibration
+            COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_calibration_arm.py
+                $<TARGET_FILE:huntsman_firmware> --reference ${HUNTSMAN_PRODUCTION_REFERENCE}
+            DEPENDS huntsman_firmware USES_TERMINAL VERBATIM)
     endif()
     if(HUNTSMAN_TRAVEL_LIGHTING)
         target_sources(huntsman_firmware PRIVATE src/travel_lighting.c src/lighting_bus.c)

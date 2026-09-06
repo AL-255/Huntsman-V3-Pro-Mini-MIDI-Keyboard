@@ -1,0 +1,30 @@
+# Repository rules
+
+## Documentation describes the latest build only
+
+- Keep all project-authored Markdown aligned with the latest complete firmware
+  build and matching host tools. Update or remove obsolete descriptions in
+  place; do not retain historical status, development snapshots, old artifact
+  hashes, flash-session narratives or superseded validation results.
+- State the complete build preset, current behavior and actual verification
+  limits consistently. Never present modeled tests as physical validation.
+- Keep useful design rationale, original-firmware reference facts and supported
+  compatibility behavior only where they explain the current implementation.
+- Check relative documentation links after moving or deleting a document.
+- Preserve upstream SDK documentation, license notices and provenance; do not
+  rewrite vendored material to satisfy the project-documentation rule.
+
+## Firmware and data boundaries
+
+- Keep the original extraction read-only. Do not consult the broken sibling
+  implementation or commit original firmware, disassembly, private device
+  dumps, serial-number data or credentials.
+- Implement only the application. Preserve bootloader, primary settings and
+  serial-number storage, factory/security data and secondary-ASIC firmware.
+  Calibration may write only its two documented tail pages, 0x7d400/0x7d600.
+- Use the supplied updater for application flashing. Application flashes are
+  authorized for this device; tests/builds must not implicitly flash or reset it.
+  Manual forced bootloader recovery is not a routine test strategy.
+- Use the pinned official NXP SDK sources for USB and peripheral integration.
+- Run relevant native tests and the complete application build before handoff.
+  Keep device-dependent checks separate and report what was actually verified.

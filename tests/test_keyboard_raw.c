@@ -2,13 +2,38 @@
 #include "keyboard_layout.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 static keyboard_raw_t s;
 static uint16_t raw[61];
 static void frame(void) { keyboard_raw_frame(&s, raw, 61, 1, true); }
 static bool a(void) { return keyboard_report_get_usage(&s.engine.report, 4); }
 
-static void check_velocity(float actual, int32_t raw_velocity)
+static int compare_interval(const void *a, const void *b)
+{
+    const int x = *(const int *)a, y = *(const int *)b;
+    return (x > y) - (x < y);
+}
+
+static double filtered_oracle(const uint16_t *points)
+{
+    int intervals[4], ordered[4];
+    for (unsigned i=0; i<4; ++i) ordered[i]=intervals[i]=(int)points[i]-points[i+1];
+    qsort(ordered,4,sizeof(*ordered),compare_interval);
+    const double median=(ordered[1]+ordered[2])/2.0;
+    unsigned discard=0;
+    double largest=-1;
+    for (unsigned i=0; i<4; ++i) {
+        double distance=intervals[i]-median;
+        if (distance<0) distance=-distance;
+        if (distance>largest) { largest=distance; discard=i; }
+    }
+    double sum=0;
+    for (unsigned i=0; i<4; ++i) if (i!=discard) sum+=intervals[i];
+    return sum/3.0*8000.0;
+}
+
+static void check_velocity(float actual, double raw_velocity)
 {
     const double expected = raw_velocity <= 0 ? 0.0 : raw_velocity >= 4500000 ? 1.0
                             : raw_velocity / 4500000.0;
@@ -23,7 +48,7 @@ static void velocity_history_oracle(void)
     uint16_t history[65][256], values[65];
     bool triggers[65][256] = {{false}}, down[65] = {false};
     uint32_t completed[65] = {0}, random = 42;
-    int32_t last[65] = {0};
+    double last[65] = {0};
     keyboard_raw_init(&keys);
     keyboard_raw_enable(&keys, false);
     for (unsigned i = 0; i < 65; ++i) values[i] = 3900;
@@ -38,7 +63,7 @@ static void velocity_history_oracle(void)
             down[i] = next;
             if (frame >= 5 && triggers[i][frame-5]) {
                 const uint16_t *p = &history[i][frame-4];
-                last[i] = 800*(2*(int32_t)p[0]+p[1]-p[3]-2*(int32_t)p[4]);
+                last[i] = filtered_oracle(p);
                 ++completed[i];
             }
         }
@@ -92,7 +117,7 @@ static void velocity_tests(void)
         values[0] = rapid[n]; keyboard_raw_frame(&keys, values, 65, 3, true);
         if (n == 5 || n == 7 || n == 9) {
             const uint16_t *p = &rapid[n-4];
-            const int32_t expected = 800*(2*(int32_t)p[0]+p[1]-p[3]-2*(int32_t)p[4]);
+            const double expected = filtered_oracle(p);
             check_velocity(keys.velocity[0].value, expected);
             assert(keys.velocity[0].captures == 2+(n-5)/2);
         }
@@ -124,11 +149,10 @@ static void velocity_clamp_tests(void)
     const uint16_t points[][5] = {
         {2000,2100,2200,2300,2400}, /* negative */
         {3000,3000,3000,3000,3000}, /* zero */
-        {3000,3000,3000,2999,3000}, /* smallest positive fit */
-        {3000,3000,3000,1876,750},  /* 4499200 */
-        {3000,3000,3000,1875,750},  /* exactly 4500000 */
-        {3000,3000,3000,1874,750},  /* 4500800 */
-        {3500,3500,3000,1000,1}     /* well above maximum */
+        {3000,2999,2998,2996,2976}, /* fractional 10666.666... counts/s */
+        {3500,2938,2376,1813,813},  /* 4498666.666... (below clamp) */
+        {3500,2937,2374,1812,812},  /* 4501333.333... (above clamp) */
+        {4096,3096,2096,1096,96}    /* well above maximum */
     };
     for (unsigned k = 0; k < sizeof(points)/sizeof(points[0]); ++k) {
         keyboard_raw_init(&s);
@@ -136,13 +160,39 @@ static void velocity_clamp_tests(void)
         frame(); raw[32] = 3500; frame();
         for (unsigned i = 0; i < 5; ++i) { raw[32] = points[k][i]; frame(); }
         const uint16_t *p = points[k];
-        const int32_t expected = 800*(2*(int32_t)p[0]+p[1]-p[3]-2*(int32_t)p[4]);
+        const double expected = filtered_oracle(p);
         assert(s.velocity[32].valid && s.velocity[32].captures == 1);
         check_velocity(s.velocity[32].value, expected);
         if (k < 2) assert(s.velocity[32].value == 0.0f);
         if (k >= 4) assert(s.velocity[32].value == 1.0f);
     }
-    puts("PASS normalized float: negative/zero, small positive, below/at/above 4500000");
+    puts("PASS normalized float: negative/zero, fractional positive, below/above 4500000");
+}
+
+static void pop_filter_tests(void)
+{
+    for (unsigned outlier=0;outlier<4;++outlier) {
+        for (int spike=-1000;spike<=1000;spike+=2000) {
+            keyboard_raw_init(&s);
+            for(unsigned i=0;i<61;++i) raw[i]=3900;
+            frame(); raw[32]=3500; frame();
+            int value=2000;
+            for (unsigned j=0;j<5;++j) {
+                raw[32]=(uint16_t)value; frame();
+                if(j<4) value-=j==outlier ? spike : 10;
+            }
+            check_velocity(s.velocity[32].value,80000);
+        }
+    }
+    const uint16_t tie[2][5]={{3000,3000,2990,2970,2940},{3000,2970,2950,2940,2940}};
+    for(unsigned k=0;k<2;++k) {
+        keyboard_raw_init(&s);
+        for(unsigned i=0;i<61;++i) raw[i]=3900;
+        frame(); raw[32]=3500; frame();
+        for(unsigned j=0;j<5;++j) {raw[32]=tie[k][j]; frame();}
+        check_velocity(s.velocity[32].value,k ? 80000 : 160000);
+    }
+    puts("PASS pop filter: high/low outlier at each of four intervals; earliest tie wins");
 }
 
 int main(void)
@@ -150,6 +200,7 @@ int main(void)
     velocity_tests();
     velocity_history_oracle();
     velocity_clamp_tests();
+    pop_filter_tests();
     keyboard_raw_init(&s);
     for (unsigned i = 0; i < 61; ++i) raw[i] = 3900;
     assert(keyboard_key_for_sensor(1, 32) == 0x1f);

@@ -1,22 +1,26 @@
 # Production-derived per-key travel lighting
 
-Status: flashed once with explicit authorization on 2026-09-05. USB, CDC,
-optical scanning and LED transfer completion passed the checks below.
-**Visible illumination and physical travel proportionality remain unverified.**
-The retained `build-stream` image is unchanged.
+Travel lighting is included in the installed `keyboard-calibration-parallel`
+application. The recovered controller/mapping details below remain applicable;
+see [current validation](CALIBRATION.md#validation-status).
+User calibration supplies independently saved per-key endpoints, but
+optical counts are not a validated linear millimeter or force measurement.
 
 ## Behavior and limits
 
 The `travel-lighting` preset brings up USB first, automatically starts one
 optical scan attempt after USB configuration, then initializes lighting once
 ASIC layout discovery succeeds. It does not require CDC to be opened or a
-`scan start` command. Host NKRO keystrokes remain separately gated by `keys on`.
-Diagnostic/USB-only presets retain their existing startup policy.
+`scan start` command. The current complete preset also enables standalone NKRO
+after neutral arming; the original lighting-only preset required `keys on`.
+Diagnostic/USB-only presets retain their own startup policy.
 
 Each key is white with 8-bit PWM proportional to its endpoint-normalized raw
 reading. It does not use pressed/released state, the FN editor, actuation
 threshold, rapid-trigger hysteresis, gamma correction, or the keyboard engine's
-low-level deadband:
+low-level deadband. MIDI mode/shift and calibration indicators overlay the
+base white effect as described in [MIDI design](MIDI_DESIGN.md) and
+[calibration](CALIBRATION.md):
 
 ```text
 PWM = round(255 * (upper - raw) / (upper - lower)), clamped to 0..255
@@ -27,22 +31,23 @@ Invalid input, unsettled scanning, stopped/faulted scanning, USB unconfigured,
 or no new scan for 100 ms requests a black frame. A new full lighting frame is
 started at most every 40 ms, corresponding to production's alternating
 20 ms controller slots. Each upload snapshots the newest desired frame;
-there is no historical-frame FIFO. The primary and secondary controller
+there is no queued-frame FIFO. The primary and secondary controller
 uploads use the same frozen snapshot.
 
 **This is linear in production-normalized optical travel, not a validated
 linear millimeter measurement or perceived-brightness curve.** The existing
 scanner attempts the original ASIC endpoint calibration. If rejected, it keeps
-production defaults 2240/3360 from `0x20016464`. The earlier physical test
-reported `calibrated=0`; using defaults may leave dark/saturated portions of
-the physical stroke. This work does not pretend that calibration succeeded.
+production defaults 2240/3360 from `0x20016464`. Using defaults may leave
+dark/saturated portions of the physical stroke. Saved user calibration overrides these endpoints
+after startup settling. One complete physical 61-key calibration and flash
+readback succeeded; see [the validation record](CALIBRATION.md#validation-status).
 
 Production additionally reads CRC-checked persistent calibration blocks
 (`0x2001ad30`: flash offsets `0x49000`, `0x49600`, `0x49c00`) and applies
 overrides in `0x20015dec`. Those persistent reads/overrides are not implemented
-here; no new flash-controller commands, factory-region access or calibration
-writes were introduced. Accurate full-stroke millimeter proportionality
-remains dependent on recovering/validating those endpoints or physical
+here. Instead, our own calibration writes only the verified unused tail pages
+0x7d400 and 0x7d600; it does not replace the primary factory/settings blocks.
+Accurate full-stroke millimeter proportionality still requires physical
 measurements. The LED mapping/protocol and PWM arithmetic are independently
 testable without assuming that accuracy.
 
@@ -95,9 +100,9 @@ The pins' electrical roles are not inferred beyond this recovered sequence.
 The build uses the existing official MCUXpresso Installer-selected NXP source
 snapshots and Arm GNU 14.2.1 toolchain. No vendor sources were modified. LED
 GPIO, clock, FLEXCOMM and I2C operations use the SDK. The old blocking
-`src/lighting.c` is not linked into this candidate.
+`src/lighting.c` is not linked into the application.
 
-Production uses DMA channel 7 and retries/reinitializes on errors. This candidate
+Production uses DMA channel 7 and retries/reinitializes on errors. The application
 deliberately uses the SDK's **nonblocking interrupt** I2C API: its DMA error
 paths call `DMA_AbortTransfer`, which can busy-wait indefinitely. LEDs have
 FLEXCOMM1 IRQ priority 3, below USB and optical DMA. LED initialization never
@@ -113,19 +118,17 @@ may remain visible: blacking them cannot be guaranteed over a failed bus.
 ## Build and commands
 
 ```sh
-cmake --preset travel-lighting
-cmake --build --preset travel-lighting
+cmake --preset host-tests
+cmake --build --preset host-tests
+cmake --preset keyboard-calibration-parallel
+cmake --build --preset keyboard-calibration-parallel
 cmake --build --preset host-tests --target audit-lighting
-cmake --build --preset travel-lighting --target audit-lighting
+cmake --build --preset keyboard-calibration-parallel --target audit-lighting
 ```
 
 The audit targets require the Python dependencies in `tools/requirements-audit.txt`.
-They neither open nor flash a device. Output is
-`build-lighting/huntsman_firmware.bin`, exactly 131072 bytes, linked at
-`0x20000000`. Existing USB/keyboard/stream images are preserved. Reviewed hash:
-`4951843f21c36363627f3e55735ca101dfd839fc8b434503af4382a8366bd7b9`.
-Application load 51276 bytes; SRAMX including heap 18696/24576 bytes; USB SRAM
-15488/16384 bytes. Bootloader and other flash regions are unchanged.
+They neither open nor flash a device. Current output is in
+`build-keyboard-calibration-parallel`; the binary is 131072 bytes.
 
 Runtime diagnostics are:
 
@@ -167,33 +170,3 @@ As before, text replies are suppressed while the binary stream owns CDC.
 The tests above are software/register-model results, not measurements of
 electrical timing, keycap illumination, physical travel, power draw or
 interrupt latency on the connected board.
-
-### Authorized hardware flash and checks (2026-09-05)
-
-- Flashed the reviewed SHA-256 above using the supplied updater's
-  `flash_app_image` once: application-only erase, all 2048 64-byte blocks
-  acknowledged, then DFU exit. No flash readback is available through this
-  workflow; acknowledgments are not an independent byte-for-byte readback.
-- One software bootloader entry; no retry, manual reset, GPIO recovery or
-  secondary/factory-region programming. Port `3-2.1` changed from application
-  device 11 to bootloader device 12, then application device 13.
-- Application returned at 480 Mbit/s with keyboard, MIDI and CDC drivers;
-  updater serial feature response was unchanged. Kernel messages showed the
-  expected MIDI 1.0 fallback and control-only HID interface warning, with no
-  additional disconnect/enumeration failure during validation.
-- CDC `light status`: profile 1, on, running/maintenance phases 5/6,
-  transfers increasing from 780 to 1014, complete frames from 500 to 650,
-  errors 0. These counters establish completed controller transactions,
-  not visible keycap output.
-- CDC `scan status`: 61 sensors, settled and valid, errors 0; frames
-  increased from 32024 to 39742. Calibration remained 0. Sample index 32
-  reported raw 3921 with fallback endpoints 2240/3360.
-- With lighting running, a 3.0-second binary CDC capture decoded 5683
-  complete 61-sensor frames, no sequence discontinuities or invalid frames,
-  raw range 3782..4018. Observed delivery was about 1.89 kframes/s, not 8 kHz.
-- Left scanning, lighting and binary streaming enabled; host keystrokes
-  remain disabled. USB device number remained 13 throughout the checks.
-
-Physical confirmation of per-key illumination is still required. In
-particular, rejected calibration means this test does not establish linear
-brightness over the entire physical key stroke.

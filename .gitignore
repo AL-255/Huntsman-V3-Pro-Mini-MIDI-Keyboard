@@ -4,3 +4,8 @@ compile_commands.json
 *.swp
 __pycache__/
 /.venv-audit/
+# Private device readbacks: never redistribute stock firmware or user data.
+/device-dumps/
+*.device-dump.bin
+*.device-dump.bin.json
+*.device-dump.json

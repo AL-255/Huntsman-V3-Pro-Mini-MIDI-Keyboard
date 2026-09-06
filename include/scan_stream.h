@@ -20,4 +20,7 @@ bool scan_stream_service(void); /* true while owning CDC IN */
 void scan_stream_complete(void);
 void scan_stream_usb_reset(void);
 uint32_t scan_stream_dropped(void);
+/* One response at a time; no overwrite of queued or USB-owned dump data. */
+bool scan_stream_dump_ready(void);
+void scan_stream_dump_push(const uint8_t report[128]);
 #endif

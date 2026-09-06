@@ -42,12 +42,15 @@ void keyboard_midi_guard(keyboard_midi_t *s, keyboard_raw_t *raw)
 
 static uint8_t default_note(uint8_t usage)
 {
-    /* Scientific note names: C0=12, C4=60. User's octave jumps intentional. */
+    /* Scientific note names: C4=60, C5=72, C6=84. Two playable rows. */
     static const uint8_t map[][2] = {
-        {0x2b,12},{0x14,14},{0x1a,16},{0x08,17},{0x15,19},{0x17,33},
-        {0x1c,35},{0x18,24},{0x0c,26},{0x12,28},{0x13,29},{0x2f,31},
-        {0x30,45},{0x31,47},{0x1e,13},{0x1f,15},{0x21,18},{0x22,32},
-        {0x23,34},{0x25,25},{0x26,27},{0x2d,30},{0x2e,44},{0x2a,46}
+        {0x2b,72},{0x14,74},{0x1a,76},{0x08,77},{0x15,79},{0x17,81},
+        {0x1c,83},{0x18,84},{0x0c,86},{0x12,88},{0x13,89},{0x2f,91},
+        {0x30,93},{0x31,95},{0x1e,73},{0x1f,75},{0x21,78},{0x22,80},
+        {0x23,82},{0x25,85},{0x26,87},{0x2d,90},{0x2e,92},{0x2a,94},
+        {0x04,61},{0x1d,62},{0x16,63},{0x1b,64},{0x06,65},{0x09,66},
+        {0x19,67},{0x0a,68},{0x05,69},{0x0b,70},{0x11,71},{0x10,72},
+        {0x0e,73},{0x36,74},{0x0f,75},{0x37,76},{0x38,77},{0x34,78}
     };
     for (unsigned i = 0; i < sizeof(map)/sizeof(map[0]); ++i)
         if (map[i][0] == usage) return map[i][1];
@@ -68,7 +71,8 @@ static void layout(keyboard_midi_t *s, const keyboard_raw_t *raw)
             if (a->arg0 == 1) s->role[i] = ROLE_DOWN;
             else if (a->arg0 == 4) s->role[i] = ROLE_UP;
             else if (a->arg1 == 0x28) s->role[i] = ROLE_ENTER;
-            if (!a->arg0) s->mapping[i] = default_note(a->arg1);
+            if (a->arg0 == 2) s->mapping[i] = 60; /* left Shift: C4 in MIDI only */
+            else if (!a->arg0) s->mapping[i] = default_note(a->arg1);
         }
     }
 }
@@ -221,11 +225,26 @@ void keyboard_midi_lights(const keyboard_midi_t *s, uint8_t *frame, uint32_t now
     if (!s->profile) return;
     const uint32_t elapsed = now - s->changed_at;
     const bool flash = s->changes && elapsed < 600u && (elapsed / 150u) % 2u == 0u;
+    unsigned magnitude = s->octave < 0 ? -(int)s->octave : s->octave;
+    if (magnitude > 10u) magnitude = 10u;
+    /* Full period 1200 ms at +/-1, down to 120 ms at +/-10. Minimum
+     * half-period 60 ms stays above the LED scheduler's 40 ms frame period. */
+    const unsigned half_period = 60u * (11u - magnitude);
+    const bool blink_on = (now / half_period) % 2u == 0u;
     const unsigned count = s->profile == 3 ? 65 : 60 + s->profile;
     for (unsigned i = 0; i < count; ++i) {
-        if (!flash && s->role[i] != ROLE_ENTER) continue;
+        const bool octave_key = s->mode &&
+            ((s->octave < 0 && s->role[i] == ROLE_DOWN) ||
+             (s->octave > 0 && s->role[i] == ROLE_UP));
+        if (!flash && s->role[i] != ROLE_ENTER && !octave_key) continue;
         const lighting_channels_t *ch = &g_lighting_channels[s->profile - 1][i];
         uint8_t *p = frame + ch->controller * 192u;
+        if (!flash && octave_key) {
+            p[ch->red] = blink_on ? 128 : 0;
+            p[ch->green] = blink_on ? 48 : 0;
+            p[ch->blue] = 0;
+            continue;
+        }
         p[ch->red] = 0;
         p[ch->green] = s->mode ? 0 : flash ? 128 : 24;
         p[ch->blue] = s->mode ? (flash ? 128 : 24) : 0;

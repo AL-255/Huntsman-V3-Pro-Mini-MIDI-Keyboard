@@ -27,7 +27,7 @@ class App:
         self.last_sequence = None
         self.initial_fields = False
         root.title('Huntsman • Keyboard configuration')
-        root.geometry('1180x840'); root.minsize(930,820)
+        root.geometry('1180x920'); root.minsize(930,900)
         root.configure(bg='#101820')
         style = ttk.Style(root); style.theme_use('clam')
         style.configure('TFrame',background='#101820')
@@ -54,7 +54,14 @@ class App:
         self.canvas = tk.Canvas(outer,height=270,bg='#101820',highlightthickness=0)
         self.canvas.pack(fill='x'); self.canvas.bind('<Configure>',lambda _:self.draw())
         ttk.Label(outer,text='Orange = sensor down   •   Cyan = selected   •   Numbers = raw / device velocity (0–1; legacy firmware: counts/s)').pack(anchor='w',pady=(0,12))
-        self.message = tk.StringVar(value='No flash/reset operations are performed by this GUI.')
+        calbar = ttk.Frame(outer); calbar.pack(fill='x',pady=(0,6))
+        self.calibrate_button = ttk.Button(calbar,text='Calibrate keys → device flash',command=self.calibrate)
+        self.calibrate_button.pack(side='left')
+        self.cancel_calibration_button = ttk.Button(calbar,text='Cancel calibration',command=self.cancel_calibration)
+        self.cancel_calibration_button.pack(side='left',padx=6)
+        self.calibration_status = tk.StringVar(value='Calibration requires HKG5 firmware.')
+        ttk.Label(outer,textvariable=self.calibration_status,wraplength=1100).pack(anchor='w',pady=(0,8))
+        self.message = tk.StringVar(value='Calibration saves only after all keys are completed; thresholds and MIDI mappings remain RAM-only.')
         self.footer = ttk.Label(outer,textvariable=self.message,wraplength=890)
         self.footer.pack(side='bottom',anchor='w',pady=(12,0))
         lower = ttk.Frame(outer); lower.pack(fill='both',expand=True)
@@ -113,8 +120,9 @@ class App:
             if self.snapshot.version >= 4: self.midi_note.set(note_name(self.snapshot.midi_mapping[index]))
         self.paint()
 
-    def usable(self):
+    def usable(self,allow_calibration=False):
         return bool(not self.demo and self.connection and self.connection.connected and self.snapshot and
+                    (allow_calibration or not self.snapshot.calibration_flags & 1) and
                     self.snapshot.profile == 1 and self.snapshot.count == 61 and
                     self.connection.snapshot() and time.monotonic()-self.connection.snapshot()[0] < 1)
 
@@ -123,7 +131,12 @@ class App:
         for index,(rect,text,velocity) in self.items.items():
             valid = s and s.profile == 1 and s.count == 61 and not stale
             down = valid and s.down[index]
-            self.canvas.itemconfigure(rect,fill='#a95420' if down else '#21313e' if valid else '#26303a',
+            fill = '#a95420' if down else '#21313e' if valid else '#26303a'
+            if valid and s.calibration_flags & 1:
+                fill = '#20683b' if s.calibration_done[index] else '#1d3963'
+                if s.calibration_state in (1,2): fill = '#59316d'
+                elif s.calibration_state == 3 and (s.velocity_state[index] & 8 if s.version >= 6 else s.calibration_selected == index): fill = '#a96d17'
+            self.canvas.itemconfigure(rect,fill=fill,
                                       outline='#56d7db' if index == self.selected else '#354958')
             self.canvas.itemconfigure(text,text=str(s.raw[index]) if valid else '—')
             result = 'v —'
@@ -170,6 +183,21 @@ class App:
         self.connection = Connection(self.device.get().strip())
         self.initial_fields = False; self.snapshot = None; self.last_sequence = None
         self.connection.start(); self.message.set('Connecting; requesting GUI stream and acknowledged readback…')
+
+    def calibrate(self):
+        if not self.usable() or self.snapshot.version < 5 or self.snapshot.performance_mode: return
+        if not messagebox.askyesno('Calibrate all keys',
+            'Keyboard output pauses. Release ALL keys; wait for blue. Fully press and hold blue keys for one second until green. You may hold multiple keys together on HKG6 firmware; each key has an independent timer. Include Fn and modifiers.\n\n'
+            'Five seconds of inactivity discards the attempt. Completing all keys saves calibration in two dedicated tail pages (0x7d400 / 0x7d600), preserving the serial-number area. Continue?'): return
+        try:
+            self.connection.submit('calibrate')
+            self.message.set('Calibration requested; ACK starts the routine, not a flash save. Watch progress below.')
+        except queue.Full: messagebox.showerror('Busy','Configuration queue is full.')
+
+    def cancel_calibration(self):
+        if not self.usable(allow_calibration=True): return
+        try: self.connection.submit('calcancel')
+        except queue.Full: messagebox.showerror('Busy','Configuration queue is full.')
 
     def apply(self):
         try:
@@ -273,6 +301,21 @@ class App:
         self.apply_all_button.configure(state='normal' if self.usable() and s.version >= 2 else 'disabled')
         midi_usable = self.usable() and s.version >= 4 and next(k.label for k in self.keys if k.sensor == self.selected) not in ('Fn','LCt','LAl')
         self.midi_button.configure(state='normal' if midi_usable else 'disabled')
+        supported = self.usable(allow_calibration=True) and s.version >= 5 and bool(s.calibration_flags & 4)
+        active = supported and bool(s.calibration_flags & 1)
+        self.calibrate_button.configure(state='normal' if supported and not active and not s.performance_mode else 'disabled')
+        self.cancel_calibration_button.configure(state='normal' if active else 'disabled')
+        if s and s.version >= 5:
+            names = ('Idle','Release all keys','Settling: keep all keys released','Fully hold blue keys for 1 s (parallel)' if s.version >= 6 else 'Fully hold one blue key for 1 s',
+                     'Registered: release the green key','Saving','Complete: saved to device','Aborted: discarded','Save failed: previous calibration retained')
+            reasons = ('','inactivity timeout','invalid/stale scan or USB reset','cancelled','storage failure')
+            label = next((k.label for k in self.keys if k.sensor == s.calibration_selected),'—')
+            holding = sum(bool(v & 8) for v in s.velocity_state) if s.version >= 6 else int(s.calibration_state == 3 and s.calibration_selected != 255)
+            self.calibration_status.set(f'{"STALE • " if stale else ""}Calibration: {names[s.calibration_state]} | '
+                f'{s.calibration_completed}/{s.count} | holding {holding} | key {label}, hold {s.calibration_hold}/1000 ms | idle limit {s.calibration_idle/1000:.1f} s | '
+                f'flash generation {s.calibration_generation} ({"saved" if s.calibration_flags & 2 else "factory bounds"})'
+                + (f' | {reasons[s.calibration_reason]}' if s.calibration_reason else '')
+                + (f' | storage error 0x{s.calibration_error:x}' if s.calibration_error else ''))
         self.paint(stale)
         self.after_id = self.root.after(33,self.update)
 

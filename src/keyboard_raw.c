@@ -67,13 +67,32 @@ static void velocity_frame(keyboard_velocity_t *v, uint16_t raw, bool trigger, b
     if (v->pending & 16u) {
         /* The triggering sample is excluded. At trigger+5 the rolling window
          * contains exactly samples +1..+5, oldest at the next write slot.
-         * Negated OLS slope: -sum((-2,-1,0,1,2)*y)/10 * assumed 8000 Hz. */
+         * Four signed intervals: decreasing ADC means positive velocity.
+         * Discard one furthest from the median (earliest wins ties), then
+         * average the other three. Keep fractions until float normalization. */
         const unsigned w = v->write;
-        const int32_t fit = 2 * (int32_t)v->window[w] + v->window[(w+1u)%5u]
-                          - v->window[(w+3u)%5u] - 2 * (int32_t)v->window[(w+4u)%5u];
-        const int32_t raw_velocity = fit * 800;
+        int32_t delta[4], sorted[4], sum = 0;
+        for (unsigned i = 0; i < 4; ++i) {
+            delta[i] = (int32_t)v->window[(w+i)%5u] - v->window[(w+i+1u)%5u];
+            sorted[i] = delta[i]; sum += delta[i];
+        }
+        for (unsigned i = 1; i < 4; ++i) {
+            const int32_t item = sorted[i];
+            unsigned j = i;
+            while (j && sorted[j-1] > item) { sorted[j] = sorted[j-1]; --j; }
+            sorted[j] = item;
+        }
+        const int32_t twice_median = sorted[1] + sorted[2];
+        unsigned outlier = 0;
+        int32_t largest = -1;
+        for (unsigned i = 0; i < 4; ++i) {
+            int32_t distance = 2 * delta[i] - twice_median;
+            if (distance < 0) distance = -distance;
+            if (distance > largest) { largest = distance; outlier = i; }
+        }
+        const float raw_velocity = (float)(sum - delta[outlier]) * (8000.0f / 3.0f);
         v->value = raw_velocity <= 0 ? 0.0f : raw_velocity >= 4500000 ? 1.0f
-                   : (float)raw_velocity / 4500000.0f;
+                   : raw_velocity / 4500000.0f;
         ++v->captures;
         v->valid = true;
     }

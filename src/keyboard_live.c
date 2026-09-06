@@ -23,10 +23,69 @@ static bool s_stream_requested;
 #ifdef HUNTSMAN_KEYBOARD_MODE
 #include "keyboard_raw.h"
 #include "keyboard_midi.h"
+#include "flash_dump.h"
+#include "calibration_store.h"
 static keyboard_raw_t s_raw;
 static keyboard_midi_t s_midi;
+/* This is writable application RAM (the bootloader loads the full image
+ * here). Keep the independent hold registers out of scarce peripheral SRAMX.
+ * keyboard_live_init explicitly initializes the complete state before use. */
+static keyboard_calibration_t s_cal __attribute__((section(".calibration_state")));
+static calibration_store_t s_cal_store;
+static bool s_cal_loaded, s_cal_chord;
+static uint8_t s_cal_fn, s_cal_c;
 static uint32_t s_gui_sequence, s_gui_ack, s_last_gui;
 static uint8_t s_gui_result;
+
+static bool calibration_begin(uint32_t now)
+{
+    if (s_midi.mode || !s_scan.ready || !s_scan.valid || !usb_composite_ready() ||
+        s_transport.phase != OPT_SCAN_READ || (uint32_t)(now-s_last_frame)>=100u ||
+        !calibration_start(&s_cal,s_raw.profile,s_raw.count,now)) return false;
+    keyboard_raw_invalidate(&s_raw);
+    s_sent_valid=false;
+    return true;
+}
+
+static void calibration_service_frame(uint32_t now)
+{
+    if (!s_cal_loaded && s_scan.ready && s_scan.valid) {
+        calibration_store_load(&s_cal_store,s_transport.profile,s_scan.count,s_scan.lower,s_scan.upper,flash_calibration_read);
+        s_cal_loaded=true;
+        if (s_cal_store.saved) s_scan.calibrated=s_scan.count;
+        /* Resolve the physical chord once, not 65 action-table searches on
+         * every 8 kHz frame. No additional per-key state in the normal path. */
+        for (unsigned i=0; i<s_raw.count; ++i) {
+            uint8_t key=keyboard_key_for_sensor(s_raw.profile,i);
+            const keyboard_action_t *a=keyboard_action(s_raw.profile,key,0);
+            if (key==KEY_ID_FN) s_cal_fn=i;
+            if (a && a->type==2u && !a->arg0 && a->arg1==0x06u) s_cal_c=i;
+        }
+    }
+    bool fn=s_cal_fn<s_raw.count && s_raw.down[s_cal_fn];
+    bool c=s_cal_c<s_raw.count && s_raw.down[s_cal_c];
+    if (!fn && !c) s_cal_chord=false;
+    if (fn && c && !s_cal_chord && s_raw.enabled && s_raw.armed) {
+        s_cal_chord=true;
+        (void)calibration_begin(now);
+    }
+    bool active=calibration_active(&s_cal);
+    bool neutral=true;
+    if (active) for (unsigned i=0; i<s_raw.count; ++i)
+        if (s_transport.samples[i]<=s_raw.release[i]) neutral=false;
+    calibration_frame(&s_cal,s_transport.samples,s_scan.ready && s_scan.valid,neutral,now);
+    if (s_cal.state==CAL_SAVE) {
+        bool success=calibration_store_save(&s_cal_store,&s_cal,flash_calibration_read,flash_calibration_write);
+        if (success) {
+            memcpy(s_scan.lower,s_cal.lower,sizeof(s_scan.lower));
+            memcpy(s_scan.upper,s_cal.upper,sizeof(s_scan.upper));
+            s_scan.calibrated=s_scan.count;
+        }
+        calibration_finish(&s_cal,success,now);
+    }
+    if (active && !calibration_active(&s_cal)) keyboard_raw_invalidate(&s_raw);
+    s_raw.midi_mode=s_midi.mode || calibration_active(&s_cal);
+}
 
 static void gui16(uint8_t *p, uint16_t v) { p[0] = v; p[1] = v >> 8u; }
 static void gui32(uint8_t *p, uint32_t v) { gui16(p, v); gui16(p + 2, v >> 16u); }
@@ -35,7 +94,7 @@ static void gui_snapshot(uint32_t now)
     if (!scan_stream_gui_enabled() || (uint32_t)(now - s_last_gui) < 33u) return;
     s_last_gui = now;
     uint8_t out[SCAN_STREAM_GUI_SIZE] = {0};
-    memcpy(out, "HKG4", 4u); gui16(out + 4, sizeof(out)); out[6] = 4u;
+    memcpy(out, "HKG6", 4u); gui16(out + 4, sizeof(out)); out[6] = 6u;
     out[7] = s_raw.profile; out[8] = s_raw.count;
     out[9] = s_raw.enabled | (s_raw.armed << 1u) | (s_raw.valid << 2u) |
              ((s_transport.phase == OPT_FAULT) << 3u) | ((s_lighting.phase == LIGHT_FAULT) << 4u) |
@@ -57,6 +116,7 @@ static void gui_snapshot(uint32_t now)
         gui32(out + 447 + i*4, bits);
         gui32(out + 707 + i*4, v->captures);
         out[967 + i] = v->ready | (v->valid << 1u) | ((v->pending != 0u) << 2u);
+        if (calibration_active(&s_cal) && s_cal.holds[i].active) out[967+i] |= 8u;
     }
     memcpy(out + 431, &s_sent, sizeof(s_sent)); /* last accepted USB submission */
     out[9] &= ~32u;
@@ -67,6 +127,17 @@ static void gui_snapshot(uint32_t now)
     out[1032] = s_midi.mode; out[1033] = (uint8_t)s_midi.octave;
     out[1034] = 1; out[1035] = s_midi.panic != 0;
     gui32(out + 1104, s_midi.errors); gui32(out + 1108, s_midi.changes);
+    out[1112]=s_cal.state; out[1113]=s_cal.completed; out[1114]=s_cal.selected;
+    out[1115]=calibration_active(&s_cal) | (s_cal_store.saved<<1u) | 4u;
+    uint32_t elapsed=s_cal.selected<s_cal.count ? (uint32_t)(now-s_cal.holds[s_cal.selected].since) : 0u;
+    uint32_t idle=(uint32_t)(now-s_cal.activity);
+    gui16(out+1116,s_cal.state==CAL_COLLECT && s_cal.selected!=255u ? (elapsed<1000u?elapsed:1000u) : 0u);
+    gui16(out+1118,calibration_active(&s_cal) && idle<5000u ? 5000u-idle : 0u);
+    memcpy(out+1120,s_cal.done,9u); out[1129]=s_cal.reason;
+    if (s_cal.selected<s_cal.count) {
+        gui16(out+1130,s_cal.upper[s_cal.selected]); gui16(out+1132,s_cal.lower[s_cal.selected]);
+    }
+    gui32(out+1136,s_cal_store.generation); gui32(out+1140,s_cal_store.error);
     uint32_t checksum = 0;
     for (unsigned i = 0; i < sizeof(out)-4u; i += 2u) checksum += out[i] | (uint16_t)out[i+1] << 8u;
     gui32(out + sizeof(out)-4u, checksum);
@@ -152,6 +223,10 @@ void keyboard_live_init(void)
 #ifdef HUNTSMAN_KEYBOARD_MODE
     keyboard_raw_init(&s_raw);
     keyboard_midi_init(&s_midi);
+    calibration_init(&s_cal);
+    s_cal_store=(calibration_store_t){.slot=255};
+    s_cal_loaded=s_cal_chord=false;
+    s_cal_fn=s_cal_c=255u;
     s_gui_sequence = s_gui_ack = s_last_gui = 0u;
     s_gui_result = 0u;
 #endif
@@ -166,7 +241,12 @@ void keyboard_live_usb_reset(void) { s_usb_reset = true; scan_stream_usb_reset()
 void keyboard_live_service(void)
 {
     const uint32_t now = board_millis();
-    if (s_usb_reset) { s_usb_reset = false; release_host(); }
+    if (s_usb_reset) {
+        s_usb_reset = false; release_host();
+#ifdef HUNTSMAN_KEYBOARD_MODE
+        calibration_abort(&s_cal,CAL_INVALID,now);
+#endif
+    }
 #ifdef HUNTSMAN_TRAVEL_LIGHTING
     /* This preset is a working effect, not an OFF-by-default diagnostic.
      * USB first; one optical route attempt; never restart on a fault/reset. */
@@ -186,9 +266,11 @@ void keyboard_live_service(void)
         if (!s_scan.count) keyboard_scan_init(&s_scan, s_transport.profile);
         keyboard_scan_frame(&s_scan, s_transport.samples, s_transport.tables[4], s_transport.tables[6], event);
 #ifdef HUNTSMAN_KEYBOARD_MODE
+        s_raw.midi_mode=s_midi.mode || calibration_active(&s_cal);
         keyboard_raw_frame(&s_raw, s_transport.samples, s_transport.count, s_transport.profile,
                            s_scan.ready && s_scan.valid && usb_composite_ready());
-        keyboard_midi_frame(&s_midi, &s_raw, s_scan.lower, s_scan.upper, now);
+        calibration_service_frame(now);
+        if (!calibration_active(&s_cal)) keyboard_midi_frame(&s_midi, &s_raw, s_scan.lower, s_scan.upper, now);
 #endif
 #ifdef HUNTSMAN_TRAVEL_LIGHTING
         if (s_lighting.phase == LIGHT_OFF)
@@ -197,6 +279,7 @@ void keyboard_live_service(void)
                               s_scan.ready && s_scan.valid, now);
 #ifdef HUNTSMAN_KEYBOARD_MODE
         keyboard_midi_lights(&s_midi, s_lighting.desired, now);
+        calibration_lights(&s_cal, s_lighting.desired, now);
 #endif
 #endif
     }
@@ -211,9 +294,13 @@ void keyboard_live_service(void)
         (s_lighting.phase == LIGHT_RUN || s_lighting.phase == LIGHT_FAULT)) lighting_status();
 #endif
 #ifdef HUNTSMAN_KEYBOARD_MODE
+    bool was_calibrating=calibration_active(&s_cal);
+    calibration_tick(&s_cal,s_scan.valid && (uint32_t)(now-s_last_frame)<100u &&
+                     s_transport.phase==OPT_SCAN_READ && usb_composite_ready(),now);
+    if (was_calibrating && !calibration_active(&s_cal)) keyboard_raw_invalidate(&s_raw);
     if ((uint32_t)(now - s_last_frame) >= 100u || s_transport.phase != OPT_SCAN_READ || !usb_composite_ready())
         keyboard_raw_invalidate(&s_raw);
-    s_host_keys = s_raw.armed;
+    s_host_keys = s_raw.armed && !calibration_active(&s_cal);
     keyboard_midi_guard(&s_midi, &s_raw);
     keyboard_midi_service(&s_midi, now, usb_midi_send);
 #else
@@ -269,6 +356,17 @@ static bool decimal(const char **text, uint32_t *value)
 bool keyboard_live_command(const char *line)
 {
 #ifdef HUNTSMAN_KEYBOARD_MODE
+    if (!strncmp(line, "dump read ", 10u)) {
+        const char *p = line + 10u;
+        uint32_t id = 0, address = 0;
+        if (decimal(&p, &id) && id && *p++ == ' ' && decimal(&p, &address) && !*p && scan_stream_dump_ready()) {
+            uint8_t out[FLASH_DUMP_SIZE];
+            s_stream_requested = false;
+            flash_dump_record(id, address, out);
+            scan_stream_dump_push(out);
+        }
+        return true;
+    }
     if (!strcmp(line, "stream gui")) {
         scan_stream_gui(); s_stream_requested = true; return true;
     }
@@ -280,6 +378,14 @@ bool keyboard_live_command(const char *line)
         if (!decimal(&p, &id) || !id) return true;
         s_gui_ack = id; s_gui_result = 2u;
         if (!strncmp(line, "cfg get ", 8u) && !*p) s_gui_result = 1u;
+        else if (!strncmp(line,"cfg calcancel ",14u) && !*p) {
+            calibration_abort(&s_cal,CAL_CANCELLED,board_millis());
+            keyboard_raw_invalidate(&s_raw); s_gui_result=1u;
+        }
+        else if (!strncmp(line,"cfg calibrate ",14u) && !*p) {
+            if (calibration_begin(board_millis())) s_gui_result=1u;
+        }
+        else if (calibration_active(&s_cal)) return true;
         else if (!strncmp(line, "cfg enable ", 11u) && *p++ == ' ' && decimal(&p, &a) && !*p && a <= 1u) {
             keyboard_raw_enable(&s_raw, a != 0u); s_gui_result = 1u;
         }
@@ -295,6 +401,11 @@ bool keyboard_live_command(const char *line)
         return true;
     }
 #endif
+    /* No scan/lighting/config side effects may interfere with a staged
+     * calibration. GUI snapshots and read-only dump commands above still work. */
+#ifdef HUNTSMAN_KEYBOARD_MODE
+    if (calibration_active(&s_cal)) { debug_write("ERR calibration active; cfg calcancel ID to cancel\r\n"); return true; }
+#endif
     if (!strcmp(line, "help"))
     {
         debug_write("scan start | scan stop | scan status | scan sample XX (raw index hex)\r\n"
@@ -304,6 +415,8 @@ bool keyboard_live_command(const char *line)
                     "keys on requires neutral valid samples; one scan attempt per boot.\r\n");
 #ifdef HUNTSMAN_KEYBOARD_MODE
         debug_write("stream gui | cfg get ID | cfg set ID SENSOR PRESS RELEASE | cfg all ID PRESS RELEASE | cfg enable ID 0/1\r\n"
+                    "cfg calibrate ID | cfg calcancel ID; Fn+C calibrates in keyboard mode\r\n"
+                    "dump read ID ADDRESS (decimal, aligned 64-byte main-flash read; HBD1 binary response)\r\n"
                     "cfg midi ID SENSOR NOTE (0..127, 255=unmapped); Fn+Enter toggles MIDI; LCtrl/LAlt octave-/+\r\n"
                     "Standalone raw keyboard auto-arms after neutral scan; settings RAM-only.\r\n");
 #endif

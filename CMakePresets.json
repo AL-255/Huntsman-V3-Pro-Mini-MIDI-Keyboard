@@ -71,7 +71,7 @@
     {
       "name": "keyboard-storage-layout",
       "inherits": "keyboard-velocity-float",
-      "displayName": "Application config reservation only (flash writes disabled)",
+      "displayName": "Complete application with unused image-tail reservation",
       "binaryDir": "${sourceDir}/build-keyboard-storage-layout"
     },
     {
@@ -79,6 +79,36 @@
       "inherits": "keyboard-storage-layout",
       "displayName": "Keyboard/MIDI modes, velocity, poly aftertouch, GUI mapping (no automatic flash)",
       "binaryDir": "${sourceDir}/build-keyboard-midi"
+    },
+    {
+      "name": "keyboard-midi-filter",
+      "inherits": "keyboard-midi",
+      "displayName": "C4-B6 MIDI mapping and interval pop filter (no automatic flash)",
+      "binaryDir": "${sourceDir}/build-keyboard-midi-filter"
+    },
+    {
+      "name": "keyboard-dump",
+      "inherits": "keyboard-midi-filter",
+      "displayName": "Read-only bounded main-flash dumper over CDC",
+      "binaryDir": "${sourceDir}/build-keyboard-dump"
+    },
+    {
+      "name": "keyboard-dump-controller",
+      "inherits": "keyboard-dump",
+      "displayName": "Reference-matched flash controller read command (no ROM calls)",
+      "binaryDir": "${sourceDir}/build-keyboard-dump-controller"
+    },
+    {
+      "name": "keyboard-calibration",
+      "inherits": "keyboard-dump-controller",
+      "displayName": "Per-key calibration with bounded two-page tail storage",
+      "binaryDir": "${sourceDir}/build-keyboard-calibration"
+    },
+    {
+      "name": "keyboard-calibration-parallel",
+      "inherits": "keyboard-calibration",
+      "displayName": "Independent simultaneous per-key calibration holds",
+      "binaryDir": "${sourceDir}/build-keyboard-calibration-parallel"
     }
   ],
   "buildPresets": [
@@ -92,7 +122,12 @@
     { "name": "keyboard-velocity", "configurePreset": "keyboard-velocity" },
     { "name": "keyboard-velocity-float", "configurePreset": "keyboard-velocity-float" },
     { "name": "keyboard-storage-layout", "configurePreset": "keyboard-storage-layout" },
-    { "name": "keyboard-midi", "configurePreset": "keyboard-midi" }
+    { "name": "keyboard-midi", "configurePreset": "keyboard-midi" },
+    { "name": "keyboard-midi-filter", "configurePreset": "keyboard-midi-filter" },
+    { "name": "keyboard-dump", "configurePreset": "keyboard-dump" },
+    { "name": "keyboard-dump-controller", "configurePreset": "keyboard-dump-controller" },
+    { "name": "keyboard-calibration", "configurePreset": "keyboard-calibration" },
+    { "name": "keyboard-calibration-parallel", "configurePreset": "keyboard-calibration-parallel" }
   ],
   "testPresets": [
     {

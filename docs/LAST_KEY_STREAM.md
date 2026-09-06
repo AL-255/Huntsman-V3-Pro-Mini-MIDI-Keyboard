@@ -1,12 +1,12 @@
 # Triggered 20-sample key capture
 
-Status: flashed once with explicit authorization on 2026-09-05; compact CDC
-and the actual host CLI passed the hardware checks below. The earlier lighting
-image is preserved in `build-lighting`; build this revision with `last-key`.
+Device-side key selection and host capture are included in the complete
+`keyboard-calibration-parallel` application. Wait for calibration to finish
+before selecting diagnostic streams.
 
 ## Usage
 
-After flashing the new application, with scanning running and no other CDC
+With the application installed, scanning running and no other CDC
 reader, open the device directly:
 
 ```sh
@@ -21,8 +21,7 @@ With `--last-key`, omitting the device defaults to `/dev/ttyACM0`, not the
 interactive terminal. Specify a different device path if needed. To replay
 HKL1 from a pipe or redirected stdin, explicitly supply `-`; interactive tty
 stdin is rejected so a mode command cannot accidentally be sent to the console.
-Other display modes retain their existing stdin default. This default-device
-fix is host-only and does not require another firmware flash.
+Other display modes default to stdin.
 
 The user running this command needs read/write access to the device. The host
 sets the tty raw and sends `stream key THRESHOLD SESSION`, where SESSION is a
@@ -30,7 +29,7 @@ random uint32 nonce. Matching START/sequence-zero metadata acknowledges the
 new capture and prevents old queued data being mistaken for its samples.
 The tool does not flush tty input, reset the keyboard, start/restart the ASIC,
 enable host keystrokes, or change lighting. This firmware preset starts scanning
-and lighting automatically after USB configuration, as the lighting preset did.
+and lighting automatically after USB configuration.
 
 Press means raw **strictly less than** the threshold (default 3800, range
 1..4096). A new downward crossing selects that sensor. A sensor already below
@@ -48,17 +47,21 @@ line, followed by a velocity estimate, and exits successfully. The trigger sampl
 include unchanged values and release; there is no rate limiting, interpolation,
 latest-only replacement or skipped report within the requested interval.
 
-Velocity uses a least-squares straight-line fit to the **first five printed
-readbacks**, with fixed 125 microsecond spacing as requested (assumed 8000 Hz).
-Those five points span 0.5 ms under that assumption. For samples `y0..y4`,
-the estimate is `800 * (2*y0 + y1 - y3 - 2*y4)` **raw counts/second**.
-The raw slope is negated so positive means pressing/decreasing raw values;
-negative means releasing, and a flat fit gives zero. The trigger sample and
+Velocity uses the **first five printed readbacks**, with fixed 125 microsecond
+spacing as requested (assumed 8000 Hz). Those five points span 0.5 ms. The
+current host script computes four signed intervals `d[i] = y[i] - y[i+1]`,
+discards the interval furthest from their median (earliest wins ties), and
+returns `8000 * sum(remaining intervals) / 3` **raw counts/second**.
+Output retains three decimal places.
+Positive means pressing/decreasing raw values, negative means releasing,
+and flat readings give zero. The trigger sample and
 remaining fifteen readings do not influence the estimate. The result is
 printed after all twenty readings, and only for a complete valid capture.
 The startup banner and result explicitly identify the 8 kHz assumption.
 This is not calibrated millimeters/second and does not use measured delivery
-timing: the actual observed hardware rate remains lower than 8 kHz.
+timing: an actual 8 kHz acquisition rate is not established.
+
+This host estimator matches the MCU estimator before normalization.
 
 ### Repeat captures
 
@@ -125,8 +128,7 @@ The device performs selection on every accepted full optical scan and transmits
 one **20-byte HKL1 report**, instead of the 160-byte HKS1 whole-keyboard report:
 eight times less CDC payload. At a hypothetical 8,000 scans/s this is 160 kB/s
 instead of 1.28 MB/s, excluding USB overhead. There is no changed SPI clock or
-ASIC scheduler, and **this is not a claim of achieving 8 kHz**. The previous
-hardware measurements were about 1.6–1.9 kHz with whole-keyboard streaming.
+ASIC scheduler, and **this is not a claim of achieving 8 kHz**.
 
 Both formats reuse the existing 5120-byte firmware queue and 640-byte stable
 USB transfer buffer. Compact mode holds 256 queued reports and up to 32 in
@@ -144,7 +146,7 @@ past damaged bytes. Already-emitted numbers are a prefix of a failed capture,
 not proof the entire run was lossless; consumers must check the exit status.
 No host can reconstruct reports lost before capture starts or guarantee
 detection of every possible corruption with a finite checksum. Loss checking
-applies to reports in the acknowledged session, not historical device drops or
+applies to reports in the acknowledged session, not device drops before the session or
 unobserved internal ASIC conversions.
 
 ## HKL1 wire format
@@ -165,10 +167,12 @@ All integers are little-endian. Every report is 20 bytes.
 ## Build and validation
 
 ```sh
-cmake --preset last-key
-cmake --build --preset last-key
+cmake --preset host-tests
+cmake --build --preset host-tests
+cmake --preset keyboard-calibration-parallel
+cmake --build --preset keyboard-calibration-parallel
 ctest --preset host-tests
-cmake --build --preset last-key --target audit-keyboard audit-lighting
+cmake --build --preset keyboard-calibration-parallel --target audit-keyboard audit-lighting
 ```
 
 Current host tests cover the startup banner being flushed before any input,
@@ -186,38 +190,3 @@ mode switches with an immutable old USB packet, device queue overflow and
 USB reset fail-stop behavior, and actual CDC command parsing through the
 optical scan path. Existing whole-keyboard, USB, FN and lighting regressions
 remain part of the audit. None of these tests opens or flashes the keyboard.
-
-Reviewed application: `build-last-key/huntsman_firmware.bin`, exactly 131072
-bytes at `0x20000000`, SHA-256
-`9050d97a7096fb549d8aaa7f1d99790f9701e692b29301ca320d93cb276bdfa8`.
-Load size 52656 bytes; SRAMX including heap 18696/24576 bytes; USB SRAM
-15488/16384 bytes. The bootloader region is outside this image.
-
-## Authorized flash and hardware validation (2026-09-05, earlier continuous host mode)
-
-- One software bootloader entry and one supplied-updater application flash;
-  all 2048 64-byte program blocks acknowledged. No independent flash readback,
-  retries, manual resets or writes to bootloader/secondary/factory regions.
-- USB port `3-2.1`: application device 13, bootloader 14, new application 15.
-  Returned at 480 Mbit/s with keyboard, MIDI and CDC drivers and the same
-  updater serial response. No further USB disconnect during validation.
-- Threshold 3800, nonce-selected compact session: 4942 reports in approximately
-  three seconds, contiguous sequence numbers and no overflow, invalid-sample
-  or checksum errors. Measured delivery about **1647 reports/s, not 8 kHz**.
-  Selected raw range 3783..3792; a below-threshold sensor was already present,
-  so this does not demonstrate a human press or release.
-- Ran the actual `decode_scan_stream.py /dev/ttyACM0 --last-key --threshold
-  4096` process with stdout continuously drained. It produced 4975 decimal-only
-  LF-terminated lines, raw range 3928..3937, empty stderr, then exited 130 on
-  intentional SIGINT. The permissive threshold exercised selection/output
-  without requiring a physical key press.
-- Scanner stayed settled/valid with 61 sensors and errors 0. Lighting stayed
-  running with transfers/frames increasing and errors 0. Calibration remains
-  0; host keystrokes remain disabled. Kernel warnings were the existing MIDI
-  1.0 fallback, control-only HID endpoint and usbfs claim messages.
-- Restored whole-keyboard HKS1 streaming after testing. Opening `--last-key`
-  requests a new compact session automatically. No test process remains open.
-
-Device/host overflow failure paths were tested offline, not deliberately
-provoked on the physical keyboard. Compact payload reduction is verified;
-the underlying acquisition-rate limit remains unresolved.
