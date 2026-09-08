@@ -48,8 +48,7 @@ Cortex-M33 startup, vector dispatch, clocks, descriptors, full/high-speed
 control and endpoint paths, reset deferral and aligned copies with modeled
 peripherals. It does not execute the bootloader or model electrical reconnect.
 
-The installed complete image enumerates at 480 Mbit/s and its entire
-application flash matches two independent reads. HKG6 acquisition and the
-physical calibration/save/readback are described in
-[current validation](CALIBRATION.md#validation-status).
-Enumeration is not USB certification or proof of all MIDI/DAW behavior.
+The latest complete image has passed application-mode updater entry, flashing,
+USB return and live CDC telemetry on the keyboard; full application readback
+matches the binary. See [validation status](CALIBRATION.md#validation-status).
+These checks are not USB certification or proof of all MIDI/DAW behavior.

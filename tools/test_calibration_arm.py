@@ -83,6 +83,7 @@ def low_tests(args):
         assert bytes(dev.cpu.mem_read(0x2003d400,512))==p
         before=len(dev.flash.commands)
         for invalid in (2,255,0xffffffff):
+            assert dev.call('flash_calibration_erase',invalid)!=0
             assert dev.call('flash_calibration_write',invalid,0x2003d000)==102
             assert dev.call('flash_calibration_read',invalid,0x2003d400)==102
         dev.cpu.mem_write(0x2003d000,b'BAD!')
@@ -117,12 +118,14 @@ def live_tests(args):
     assert len(dev.flash.commands)==64 and all(cmd==3 for cmd,_ in dev.flash.commands)
     labels=sensor_labels()[61]
     dev.raw[labels.index('Fn')]=1000; dev.raw[labels.index('C')]=1000
-    s=snapshot(dev); assert s.calibration_state==1 and not any(s.report)
+    s=snapshot(dev); assert s.calibration_state==0 and not any(s.report)
+    dev.raw[labels.index('Fn')]=4000
+    s=snapshot(dev); assert s.calibration_state==1
     dev.raw=[4000]*61
     s=snapshot(dev); assert s.calibration_state==2
     dev.service(510)
     s=snapshot(dev); assert s.calibration_state==3
-    s=snapshot(dev,'cfg all 700 2000 3000'); assert s.result==2 and s.press[0]==3600
+    s=snapshot(dev,'cfg all 700 2000 3000'); assert s.result==2 and s.press[0]==3500
     s=snapshot(dev,'cfg calcancel 701'); assert s.result==1 and s.calibration_state==7 and s.calibration_reason==3
     assert all(cmd==3 for cmd,_ in dev.flash.commands)
     s=snapshot(dev,'cfg calibrate 702'); assert s.result==1

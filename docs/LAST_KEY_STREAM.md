@@ -1,7 +1,7 @@
 # Triggered 20-sample key capture
 
 Device-side key selection and host capture are included in the complete
-`keyboard-calibration-parallel` application. Wait for calibration to finish
+`keyboard-fn-menu` application. Wait for calibration to finish
 before selecting diagnostic streams.
 
 ## Usage
@@ -169,10 +169,10 @@ All integers are little-endian. Every report is 20 bytes.
 ```sh
 cmake --preset host-tests
 cmake --build --preset host-tests
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
 ctest --preset host-tests
-cmake --build --preset keyboard-calibration-parallel --target audit-keyboard audit-lighting
+cmake --build --preset keyboard-fn-menu --target audit-keyboard audit-lighting
 ```
 
 Current host tests cover the startup banner being flushed before any input,

@@ -22,6 +22,31 @@ void calibration_record(uint8_t *p, uint8_t profile, uint8_t count, uint32_t gen
 }
 static bool owned(const uint8_t *p) { return !memcmp(p,"HKC1",4) && p[4]==1 && p[7]==0 && get32(p+12)==0x314c4143u; }
 static bool blank(const uint8_t *p) { for (unsigned i=0; i<CAL_PAGE_SIZE; ++i) if (p[i]!=255) return false; return true; }
+bool calibration_store_clear(calibration_store_t *s, cal_read_fn read, cal_erase_fn erase)
+{
+    uint8_t page[CAL_PAGE_SIZE];
+    bool empty[2];
+    /* Check BOTH pages before any erase; never delete unidentified contents. */
+    for (unsigned slot=0;slot<2;++slot) {
+        s->error=read(slot,page);
+        if (s->error) return false;
+        empty[slot]=blank(page);
+        if (!empty[slot] && !owned(page)) { s->error=0x20002; return false; }
+    }
+    /* Retire the older slot first; never resurrect it if reset is interrupted. */
+    unsigned first=s->saved && s->slot<2 ? s->slot^1u : 0u;
+    for (unsigned i=0;i<2;++i) {
+        unsigned slot=first^i;
+        if (empty[slot]) continue;
+        s->error=erase(slot);
+        if (s->error) return false;
+        s->error=read(slot,page);
+        if (s->error) return false;
+        if (!blank(page)) { s->error=0x20003; return false; }
+    }
+    *s=(calibration_store_t){.slot=255};
+    return true;
+}
 bool calibration_record_valid(const uint8_t *p)
 {
     if (!owned(p) || p[5]<1 || p[5]>3 || p[6]!=(p[5]==3?65:60+p[5]) ||

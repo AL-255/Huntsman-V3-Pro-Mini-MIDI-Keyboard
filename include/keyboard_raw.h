@@ -2,6 +2,8 @@
 #define KEYBOARD_RAW_H
 #include "keyboard_engine.h"
 #define RAW_KEY_COUNT 65u
+#define RAW_DEFAULT_PRESS 3500u
+#define RAW_DEFAULT_RELEASE 3600u
 typedef struct {
     float value;              /* clamp(raw counts/s / 4500000, 0, 1) */
     uint32_t captures;         /* completed fits, wrapping uint32 */
@@ -15,6 +17,7 @@ typedef struct {
     bool down[RAW_KEY_COUNT];
     uint8_t count, profile;
     bool enabled, armed, valid, midi_mode;
+    bool menu_managed;
     uint32_t revision;
     keyboard_velocity_t velocity[RAW_KEY_COUNT];
 } keyboard_raw_t;

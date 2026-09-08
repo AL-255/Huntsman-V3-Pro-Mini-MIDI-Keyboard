@@ -11,6 +11,158 @@ from scan_bars import sensor_labels
 from lighting_reference_tables import recover
 
 
+def keyboard_mapping_tests(args):
+    dev = LightingArm(args.elf,args.reference)
+    dev.service(400)
+    labels = sensor_labels()[61]
+    shortcuts = {'Esc':0x35, **dict(zip(('1','2','3','4','5','6','7','8','9','0','-','='),range(0x3a,0x46))),
+                 'BkS':0x4c,'Y':0x49,'P':0x46,'N':0x4d,'M':0x4e,'H':0x4a,'J':0x4b}
+    def set_keys(**keys):
+        for label,value in keys.items(): dev.raw[labels.index(label)] = value
+        dev.service(10)
+    def usages():
+        report=dev.reports[-1]
+        assert report[0]==0, report
+        return {u for u in range(4,116) if report[2+(u-4)//8] & (1<<((u-4)%8))}
+    set_keys(RAl=500,Mnu=500,RCt=500,RSh=500)
+    assert usages()=={0x50,0x51,0x4f,0x52}, usages()
+    set_keys(RAl=3900,Mnu=3900,RCt=3900,RSh=3900)
+    assert not usages()
+    maps,_=recover(args.reference)
+    for label,usage in shortcuts.items():
+        for release_fn_first in (False,True):
+            set_keys(**{'Fn':500,label:500})
+            assert usages()=={usage}, (label,usages())
+            set_keys(**{'Fn' if release_fn_first else label:3900})
+            assert not usages(), (label,usages())
+            set_keys(**{'Fn':3900,label:3900})
+    set_keys(Fn=500); dev.service(60)
+    frame=next(p[2:] for _,p in reversed(dev.transactions) if len(p)==194)
+    for label in shortcuts:
+        c,r,g,b=maps[0][labels.index(label)]
+        assert tuple(frame[c*192+i] for i in (r,g,b))==(0,255,0),label
+    for _ in range(3):
+        set_keys(Y=500); assert usages()=={0x49}
+        set_keys(Y=3900); assert not usages()
+    set_keys(Fn=3900)
+    assert not dev.reset_requests and not dev.midi_packets
+    print('PASS ARM keyboard: four NKRO arrows without modifiers, all 20 Fn shortcuts, both release orders, Fn-held repeats, green I2C hints')
+
+
+def lower_row_tests(args):
+    dev=LightingArm(args.elf,args.reference); dev.service(400)
+    labels=sensor_labels()[61]; maps,_=recover(args.reference)
+    def keys(**values):
+        for label,value in values.items(): dev.raw[labels.index(label)]=value
+        dev.service(20)
+    def led(label):
+        frame=next(p[2:] for _,p in reversed(dev.transactions) if len(p)==194)
+        c,r,g,b=maps[0][labels.index(label)]
+        return tuple(frame[c*192+i] for i in (r,g,b))
+    def muted(value):
+        dev.command('stream off'); dev.service(20)
+        assert f'lower_muted={value}'.encode() in dev.command('menu status')
+        snapshot(dev,'stream gui')
+    keys(Fn=2400,LSh=2400); dev.service(60)
+    assert led('LSh')==(0,0,0) # no new keyboard-mode setting
+    keys(Fn=3900,LSh=3900)
+    keys(Fn=2400,Ent=2400); keys(Fn=3900,Ent=3900); dev.service(200)
+    initial=snapshot(dev,'stream gui'); assert initial.performance_mode==1
+    keys(Fn=2400); dev.service(60); assert led('LSh')==(255,255,255)
+    keys(LSh=2400); muted(0) # held preview has not toggled
+    dev.midi_packets.clear()
+    keys(LSh=3900); keys(Fn=3900); dev.service(200); muted(1)
+    lower=('Cap','A','S','D','F','G','H','J','K','L',';','\'','LSh','Z','X','C','V','B','N','M',',','.','/','RSh')
+    for label in lower: assert led(label)==(0,0,0),(label,led(label))
+    for label in ('Ent','LCt','LGu','LAl','RAl','RCt','Spc'): assert led(label)==(0,0,255)
+    dev.midi_packets.clear()
+    keys(Spc=3499); dev.service(20)
+    assert bytes([11,0xb0,64,127]) in dev.midi_packets
+    keys(Spc=3600); dev.service(20)
+    assert bytes([11,0xb0,64,0]) not in dev.midi_packets
+    keys(Spc=3601); dev.service(20)
+    assert bytes([11,0xb0,64,0]) in dev.midi_packets
+    keys(Spc=3900)
+    assert snapshot(dev,f'cfg midi 947 {labels.index("Spc")} 60').result==2
+    for label in ('Tab','Q','W','E','R','T','Y','U','I','O','P','[',']','\\'): assert led(label)==(255,)*3
+    dev.midi_packets.clear()
+    keys(**{label:1000 for label in lower}); dev.service(40)
+    assert not any(p[1] in (0x90,0xa0) for p in dev.midi_packets)
+    keys(Tab=1000); dev.service(40)
+    assert any(p[:3]==bytes([9,0x90,72]) for p in dev.midi_packets)
+    keys(Tab=3900,**{label:3900 for label in lower}); dev.service(30)
+    assert bytes([8,0x80,72,0]) in dev.midi_packets
+    # Mapping a muted key remains possible but cannot bypass the row gate.
+    index=labels.index('A'); assert snapshot(dev,f'cfg midi 955 {index} 72').result==1
+    dev.service(200); dev.midi_packets.clear(); keys(A=1000); dev.service(30)
+    assert not any(p[1]==0x90 for p in dev.midi_packets)
+    keys(A=3900); keys(Fn=2400,LSh=2400); muted(1)
+    keys(Fn=3900); keys(LSh=3900); dev.service(200); muted(0)
+    assert led('A')==(255,)*3
+    dev.midi_packets.clear(); keys(A=1000); dev.service(30)
+    assert any(p[:3]==bytes([9,0x90,72]) for p in dev.midi_packets)
+    keys(A=3900); dev.service(30)
+    assert bytes([8,0x80,72,0]) in dev.midi_packets
+    result=snapshot(dev); assert result.midi_mapping[index]==72
+    assert result.press==initial.press and result.release==initial.release
+    assert not result.midi_errors and not dev.reset_requests
+    print('PASS ARM Fn+Left Shift: MIDI-only white hint, release-only mute/unmute, Caps/Shift row gate and dark LEDs, top rows/control hints intact, custom mappings preserved; Space blue, CC64 Schmitt on/off and reserved mapping')
+
+
+def music_tests(args):
+    dev=LightingArm(args.elf,args.reference); dev.service(400)
+    labels=sensor_labels()[61]; maps,_=recover(args.reference)
+    def keys(**values):
+        for label,value in values.items(): dev.raw[labels.index(label)]=value
+        dev.service(20)
+    def status(**fields):
+        dev.command('stream off'); dev.service(20)
+        reply=dev.command('menu status')
+        for name,value in fields.items(): assert f'{name}={value}'.encode() in reply,reply
+        snapshot(dev,'stream gui')
+    def leds():
+        dev.service(60)
+        frame=next(p[2:] for _,p in reversed(dev.transactions) if len(p)==194)
+        return {label:tuple(frame[c*192+i] for i in (r,g,b)) for label,(c,r,g,b) in zip(labels,maps[0])}
+    def page(key):
+        keys(**{'Fn':2400,key:2400}); keys(**{'Fn':3900,key:3900}); dev.service(200)
+    keys(Fn=2400,Ent=2400); keys(Fn=3900,Ent=3900); dev.service(200)
+    initial=snapshot(dev,'stream gui')
+    assert initial.press==(3500,)*61 and initial.release==(3600,)*61
+    keys(Fn=2400); colors=leds()
+    for label in ('E','S','LSh'): assert colors[label]==(255,)*3
+    keys(Fn=3900)
+    page('S'); status(music_page=10,root=0,scale=9)
+    colors=leds()
+    for label in 'JIDHYMLPOT': assert colors[label]==((0,255,0) if label=='T' else (77,)*3)
+    assert colors['Esc']==(255,0,0) and colors['A']==(0,0,0)
+    dev.midi_packets.clear(); keys(J=2400); status(scale=9)
+    assert not any(p[1]==0x90 for p in dev.midi_packets)
+    keys(J=3900); dev.service(200); status(scale=0,music_page=0)
+    colors=leds(); assert colors['1']==(0,0,0) and colors['Tab']==(255,)*3
+    # C# is currently filtered, but root selection must still offer it.
+    page('E'); colors=leds()
+    assert colors['1']==(77,)*3 and colors['Tab']==(0,255,0)
+    keys(**{'1':2400}); status(root=0); keys(**{'1':3900}); dev.service(200)
+    status(root=1,scale=0,music_page=0)
+    colors=leds(); assert colors['1']==(255,)*3 and colors['Q']==(0,0,0)
+    dev.midi_packets.clear(); keys(Q=1000,**{'1':1000}); dev.service(30)
+    assert any(p[:3]==bytes([9,0x90,73]) for p in dev.midi_packets)
+    assert not any(p[:3]==bytes([9,0x90,74]) for p in dev.midi_packets)
+    keys(Q=3900,**{'1':3900}); dev.service(30)
+    assert bytes([8,0x80,73,0]) in dev.midi_packets
+    # H/P select distinct scales; Escape must not commit the held preview.
+    for label,index in (('H',3),('P',7),('T',9)):
+        page('S'); keys(**{label:2400}); keys(**{label:3900}); dev.service(200)
+        status(scale=index,root=1)
+    page('S'); keys(I=2400); keys(Esc=2400); keys(I=3900,Esc=3900); dev.service(200)
+    status(scale=9,music_page=0)
+    result=snapshot(dev)
+    assert result.midi_mapping==initial.midi_mapping and result.press==initial.press
+    assert not result.midi_errors and not dev.reset_requests
+    print('PASS ARM root/scale menus: hints, release commit, C#/major packet+LED filter, selectors bypass filter, H/P/T, Escape and mapping preservation')
+
+
 def midi_tests(args):
     dev = LightingArm(args.elf,args.reference)
     dev.service(400)
@@ -23,14 +175,36 @@ def midi_tests(args):
                 'G':68,'B':69,'H':70,'N':71,'M':72,'K':73,',':74,'L':75,
                 '.':76,'/':77,"'":78}
     assert s.performance_mode == 0
+    assert s.press==(3500,)*61 and s.release==(3600,)*61
+    # Explicit pairs retain these velocity/short-strike waveform fixtures.
+    assert snapshot(dev,'cfg all 940 3600 3700').result==1
+    dev.service(200)
     assert s.midi_mapping == tuple(expected.get(label,255) for label in labels)
     def set_keys(**keys):
         for label,value in keys.items(): dev.raw[labels.index(label)] = value
         dev.service(10)
     set_keys(Fn=3500,Ent=3500)
-    s=snapshot(dev); assert s.performance_mode == 1 and s.mode_changes == 1
-    dev.service(200); assert snapshot(dev).mode_changes == 1
-    set_keys(Fn=3900,Ent=3900); dev.service(30)
+    s=snapshot(dev); assert s.performance_mode == 0 and s.mode_changes == 0
+    dev.service(200); assert snapshot(dev).mode_changes == 0
+    set_keys(Fn=3900,Ent=3900); dev.service(200) # cleanup starts on release
+    assert snapshot(dev).performance_mode == 1
+    maps,_ = recover(args.reference)
+    def led(label):
+        frame=next(p[2:] for _,p in reversed(dev.transactions) if len(p)==194)
+        c,r,g,b=maps[0][labels.index(label)]
+        return tuple(frame[c*192+i] for i in (r,g,b))
+    for label in labels:
+        assert led(label)==((0,0,255) if label in ('Ent','LCt','LGu','LAl','RAl','RCt','Spc') else (255,)*3 if label in expected else (0,)*3),(label,led(label))
+    set_keys(Fn=3500,K=3500); set_keys(K=3900,Fn=3900); dev.service(200)
+    for label in ('Ent','LCt','LGu','LAl','RAl','RCt','Spc'): assert led(label)==(0,0,224)
+    assert led('Tab')==(224,224,224)
+    set_keys(Fn=3500,L=3500); set_keys(L=3900,Fn=3900); dev.service(200)
+    assert led('Ent')==(0,0,255) and led('Tab')==(255,255,255)
+    spare=labels.index('Mnu')
+    assert snapshot(dev,f'cfg midi 948 {spare} 60').result==1
+    dev.service(70); assert led('Mnu')==(255,)*3
+    assert snapshot(dev,f'cfg midi 949 {spare} 255').result==1
+    dev.service(200); assert led('Mnu')==(0,)*3
     dev.midi_packets.clear(); dev.reports.clear()
     values = dev.raw.copy(); values[labels.index('Tab')] = 3500
     one_raw_frame(dev,values)
@@ -49,20 +223,33 @@ def midi_tests(args):
     assert bytes([9,0x90,60,23]) in dev.midi_packets
     set_keys(LSh=3900)
     assert bytes([8,0x80,60,0]) in dev.midi_packets
-    set_keys(LAl=3500); dev.service(40)
+    set_keys(RCt=3500); dev.service(40)
     assert snapshot(dev).octave == 1
     # Exercise the compiled overlay with actual recovered control-key routing.
     maps,_ = recover(args.reference)
-    _,r,g,b = maps[0][labels.index('LAl')]
-    _,cr,cg,cb = maps[0][labels.index('LCt')]
-    for t,color in ((600000,(128,48,0)),(600600,(0,0,0))):
+    _,r,g,b = maps[0][labels.index('RCt')]
+    _,cr,cg,cb = maps[0][labels.index('RAl')]
+    for t,color in ((600000,(0,0,255)),(600600,(0,0,0))):
         dev.cpu.mem_write(0x2003d000,bytes([7])*204)
         dev.call('keyboard_midi_lights',dev.symbols['s_midi'],0x2003d000,t)
         rgb=bytes(dev.cpu.mem_read(0x2003d000,204))
         assert (rgb[r],rgb[g],rgb[b]) == color
-        assert (rgb[cr],rgb[cg],rgb[cb]) == (7,7,7)
-    set_keys(LAl=3900,Tab=3900)
+        assert (rgb[cr],rgb[cg],rgb[cb]) == (0,0,255) # idle control remains visible
+    set_keys(RCt=3900,Tab=3900)
     assert bytes([8,0x80,72,0]) in dev.midi_packets
+    dev.midi_packets.clear()
+    set_keys(LGu=1000,LAl=1000); dev.service(20)
+    assert bytes([11,0xb0,1,127]) in dev.midi_packets
+    assert bytes([14,0xe0,127,127]) in dev.midi_packets
+    set_keys(LCt=1000); dev.service(20)
+    assert bytes([14,0xe0,0,64]) in dev.midi_packets
+    set_keys(LAl=3800); dev.service(20)
+    assert bytes([14,0xe0,0,0]) in dev.midi_packets
+    set_keys(LCt=3800,LGu=3800); dev.service(20)
+    assert bytes([11,0xb0,1,0]) in dev.midi_packets
+    assert not any(p[1]==0x90 for p in dev.midi_packets)
+    assert snapshot(dev).octave==1
+    set_keys(LCt=3900,LAl=3900,LGu=3900)
     s=snapshot(dev,'cfg midi 950 32 60'); assert s.result == 1 and s.midi_mapping[32] == 60
     dev.service(180)
     for cmd in ('cfg midi 951 32 128','cfg midi 951 99 60',f'cfg midi 951 {labels.index("Fn")} 60',
@@ -75,8 +262,10 @@ def midi_tests(args):
     assert bytes([11,0xb0,120,0]) in dev.midi_packets
     set_keys(A=3900); dev.service(10)
     set_keys(Fn=3500,Ent=3500); dev.service(180)
-    assert snapshot(dev).performance_mode == 0
-    set_keys(Fn=3900,Ent=3900); set_keys(A=3500)
+    assert snapshot(dev).performance_mode == 1
+    set_keys(Fn=3900,Ent=3900); assert snapshot(dev).performance_mode == 0
+    dev.service(70); assert led('Ent')==(0,255,0) and led('Tab')==(255,255,255)
+    set_keys(A=3500)
     assert a(dev)
     print('PASS ARM USB MIDI: defaults, chord/hold, Note On velocity=23, poly aftertouch, octave-latched Off, GUI map ACK/reject, reset cleanup, HID isolation/recovery')
 
@@ -108,6 +297,8 @@ def velocity_tests(args):
     snapshot(dev,'stream gui')
     s = snapshot(dev,'cfg enable 301 0')
     assert s.version == 6 and len(s.velocity) == 65 and not s.flags & 1
+    assert s.press==(3500,)*65 and s.release==(3600,)*65
+    assert snapshot(dev,'cfg all 300 3600 3700').result==1
     one_raw_frame(dev,[3500]*65)
     for j in range(1,6): one_raw_frame(dev,[3500-(i+1)*j for i in range(65)])
     s = snapshot(dev)
@@ -141,13 +332,13 @@ def velocity_tests(args):
         assert s.captures[0] == baseline+1
     print('PASS ARM float32 pop filter: negative/zero clamp, fractional mean, below/above 4500000, high/low pops and tie handling')
     s = snapshot(dev,'cfg all 302 3100 3300')
-    assert (s.ack,s.result,s.revision) == (302,1,1)
+    assert (s.ack,s.result,s.revision) == (302,1,2)
     assert s.press == (3100,)*65 and s.release == (3300,)*65
     assert not any(v & 6 for v in s.velocity_state)
     for bad in ('cfg all 303 3300 3100','cfg all 303 3000 4096',
                 'cfg all 303 3000 3300 junk','cfg all 303 0 3300'):
         s = snapshot(dev,bad)
-        assert (s.ack,s.result,s.revision) == (303,2,1)
+        assert (s.ack,s.result,s.revision) == (303,2,2)
         assert s.press == (3100,)*65 and s.release == (3300,)*65
     print('PASS ARM DMA -> 65 independent filtered velocities, overlapping retriggers, HID disabled, atomic all-key command/readback')
 
@@ -156,6 +347,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('elf'); parser.add_argument('--reference',required=True)
     args = parser.parse_args()
+    keyboard_mapping_tests(args)
+    lower_row_tests(args)
+    music_tests(args)
     midi_tests(args)
     velocity_tests(args)
     dev = LightingArm(args.elf,args.reference)
@@ -163,11 +357,12 @@ def main():
     dev.control_out(bytes.fromhex('21 22 00 00 04 00 00 00'))
     dev.service(400)
     assert b'RAW armed' not in dev.output
-    dev.raw[32] = 3600; dev.service(10); assert not a(dev)
-    dev.raw[32] = 3599; dev.service(10); assert a(dev)
-    for value in (3600,3650,3700,3601,3699):
+    dev.raw[32] = 3500; dev.service(10); assert not a(dev)
+    dev.raw[32] = 3499; dev.service(10); assert a(dev)
+    for value in (3500,3550,3600,3501,3599):
         dev.raw[32] = value; dev.service(10); assert a(dev)
-    dev.raw[32] = 3701; dev.service(10); assert not a(dev)
+    dev.raw[32] = 3601; dev.service(10); assert not a(dev)
+    dev.raw[32] = 3900; dev.service(10) # fully release before testing different GUI pairs
     assert dev.transactions, 'lighting did not run alongside NKRO'
     dev.control_out(bytes.fromhex('21 22 01 00 04 00 00 00'))
     s = snapshot(dev,'stream gui')
@@ -178,7 +373,7 @@ def main():
     assert dev.reports[-1][2+usage//8] & (1 << (usage%8))
     s = snapshot(dev); assert s.flags & 32
     dev.key(2,False); dev.key(0x10,True)  # FN+Tab retained editor
-    s = snapshot(dev); assert s.mode == 1 and not any(s.report)
+    s = snapshot(dev); assert s.mode == 0 and not any(s.report) # preview only
     dev.key(0x10,False); dev.key(0x3b,False)
     s = snapshot(dev); assert s.mode == 1 and not s.flags & 32
     dev.key(0x6e,True); dev.key(0x6e,False)  # Escape exits

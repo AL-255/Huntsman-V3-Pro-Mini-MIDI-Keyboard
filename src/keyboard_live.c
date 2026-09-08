@@ -23,23 +23,25 @@ static bool s_stream_requested;
 #ifdef HUNTSMAN_KEYBOARD_MODE
 #include "keyboard_raw.h"
 #include "keyboard_midi.h"
+#include "keyboard_menu.h"
 #include "flash_dump.h"
 #include "calibration_store.h"
 static keyboard_raw_t s_raw;
 static keyboard_midi_t s_midi;
+static keyboard_menu_t s_menu;
 /* This is writable application RAM (the bootloader loads the full image
  * here). Keep the independent hold registers out of scarce peripheral SRAMX.
  * keyboard_live_init explicitly initializes the complete state before use. */
 static keyboard_calibration_t s_cal __attribute__((section(".calibration_state")));
 static calibration_store_t s_cal_store;
-static bool s_cal_loaded, s_cal_chord;
-static uint8_t s_cal_fn, s_cal_c;
+static bool s_cal_loaded;
+static bool s_profile_reset_pending;
 static uint32_t s_gui_sequence, s_gui_ack, s_last_gui;
 static uint8_t s_gui_result;
 
 static bool calibration_begin(uint32_t now)
 {
-    if (s_midi.mode || !s_scan.ready || !s_scan.valid || !usb_composite_ready() ||
+    if (s_midi.mode || s_raw.engine.config.mode || !s_scan.ready || !s_scan.valid || !usb_composite_ready() ||
         s_transport.phase != OPT_SCAN_READ || (uint32_t)(now-s_last_frame)>=100u ||
         !calibration_start(&s_cal,s_raw.profile,s_raw.count,now)) return false;
     keyboard_raw_invalidate(&s_raw);
@@ -53,21 +55,6 @@ static void calibration_service_frame(uint32_t now)
         calibration_store_load(&s_cal_store,s_transport.profile,s_scan.count,s_scan.lower,s_scan.upper,flash_calibration_read);
         s_cal_loaded=true;
         if (s_cal_store.saved) s_scan.calibrated=s_scan.count;
-        /* Resolve the physical chord once, not 65 action-table searches on
-         * every 8 kHz frame. No additional per-key state in the normal path. */
-        for (unsigned i=0; i<s_raw.count; ++i) {
-            uint8_t key=keyboard_key_for_sensor(s_raw.profile,i);
-            const keyboard_action_t *a=keyboard_action(s_raw.profile,key,0);
-            if (key==KEY_ID_FN) s_cal_fn=i;
-            if (a && a->type==2u && !a->arg0 && a->arg1==0x06u) s_cal_c=i;
-        }
-    }
-    bool fn=s_cal_fn<s_raw.count && s_raw.down[s_cal_fn];
-    bool c=s_cal_c<s_raw.count && s_raw.down[s_cal_c];
-    if (!fn && !c) s_cal_chord=false;
-    if (fn && c && !s_cal_chord && s_raw.enabled && s_raw.armed) {
-        s_cal_chord=true;
-        (void)calibration_begin(now);
     }
     bool active=calibration_active(&s_cal);
     bool neutral=true;
@@ -202,6 +189,7 @@ static void release_host(void)
     s_sent_valid = false; /* retry neutral on busy USB, not only once */
 #ifdef HUNTSMAN_KEYBOARD_MODE
     keyboard_raw_invalidate(&s_raw);
+    keyboard_menu_cancel(&s_menu);
 #endif
 }
 
@@ -222,11 +210,13 @@ void keyboard_live_init(void)
     s_stream_requested = true;
 #ifdef HUNTSMAN_KEYBOARD_MODE
     keyboard_raw_init(&s_raw);
+    s_raw.menu_managed=true;
     keyboard_midi_init(&s_midi);
+    keyboard_menu_init(&s_menu);
     calibration_init(&s_cal);
     s_cal_store=(calibration_store_t){.slot=255};
-    s_cal_loaded=s_cal_chord=false;
-    s_cal_fn=s_cal_c=255u;
+    s_cal_loaded=false;
+    s_profile_reset_pending=false;
     s_gui_sequence = s_gui_ack = s_last_gui = 0u;
     s_gui_result = 0u;
 #endif
@@ -267,8 +257,30 @@ void keyboard_live_service(void)
         keyboard_scan_frame(&s_scan, s_transport.samples, s_transport.tables[4], s_transport.tables[6], event);
 #ifdef HUNTSMAN_KEYBOARD_MODE
         s_raw.midi_mode=s_midi.mode || calibration_active(&s_cal);
+        const keyboard_config_t editor_before=s_raw.engine.config;
         keyboard_raw_frame(&s_raw, s_transport.samples, s_transport.count, s_transport.profile,
                            s_scan.ready && s_scan.valid && usb_composite_ready());
+        if (s_profile_reset_pending && s_raw.armed) {
+            /* Rebuild settled optical defaults only with all keys released. */
+            keyboard_scan_init(&s_scan,s_transport.profile);
+            keyboard_raw_init(&s_raw); s_raw.menu_managed=true;
+            keyboard_midi_init(&s_midi); keyboard_midi_abort(&s_midi);
+            keyboard_menu_init(&s_menu); calibration_init(&s_cal);
+            s_cal_loaded=false; s_profile_reset_pending=false;
+        }
+        uint8_t action=keyboard_menu_frame(&s_menu,&s_raw,s_scan.lower,s_scan.upper,&editor_before,
+                                          now,calibration_active(&s_cal),s_midi.lower_muted,&s_midi.music);
+        if (action==MENU_MODE) keyboard_midi_toggle(&s_midi,&s_raw,now);
+        if (action==MENU_LOWER) keyboard_midi_toggle_lower(&s_midi,&s_raw);
+        if (action==MENU_SELECT_KEY) (void)keyboard_midi_select_music(&s_midi,&s_raw,s_menu.selection,s_midi.music.scale);
+        if (action==MENU_SELECT_SCALE) (void)keyboard_midi_select_music(&s_midi,&s_raw,s_midi.music.root,s_menu.selection);
+        if (action==MENU_CALIBRATION) (void)calibration_begin(now);
+        if (action==MENU_RESET) {
+            if (calibration_store_clear(&s_cal_store,flash_calibration_read,flash_calibration_erase)) {
+                s_profile_reset_pending=true;
+                debug_write("RESET saved profile cleared; release all keys for defaults\r\n");
+            } else debug_write("RESET failed; saved profile not confirmed cleared\r\n");
+        }
         calibration_service_frame(now);
         if (!calibration_active(&s_cal)) keyboard_midi_frame(&s_midi, &s_raw, s_scan.lower, s_scan.upper, now);
 #endif
@@ -280,6 +292,9 @@ void keyboard_live_service(void)
 #ifdef HUNTSMAN_KEYBOARD_MODE
         keyboard_midi_lights(&s_midi, s_lighting.desired, now);
         calibration_lights(&s_cal, s_lighting.desired, now);
+        keyboard_menu_lights(&s_menu,&s_raw,s_scan.lower,s_scan.upper,
+            s_lighting.desired,now,s_midi.mode,
+            calibration_active(&s_cal) || (s_cal.state!=CAL_IDLE && (uint32_t)(now-s_cal.since)<1500u));
 #endif
 #endif
     }
@@ -298,8 +313,10 @@ void keyboard_live_service(void)
     calibration_tick(&s_cal,s_scan.valid && (uint32_t)(now-s_last_frame)<100u &&
                      s_transport.phase==OPT_SCAN_READ && usb_composite_ready(),now);
     if (was_calibrating && !calibration_active(&s_cal)) keyboard_raw_invalidate(&s_raw);
-    if ((uint32_t)(now - s_last_frame) >= 100u || s_transport.phase != OPT_SCAN_READ || !usb_composite_ready())
+    if ((uint32_t)(now - s_last_frame) >= 100u || s_transport.phase != OPT_SCAN_READ || !usb_composite_ready()) {
         keyboard_raw_invalidate(&s_raw);
+        keyboard_menu_cancel(&s_menu);
+    }
     s_host_keys = s_raw.armed && !calibration_active(&s_cal);
     keyboard_midi_guard(&s_midi, &s_raw);
     keyboard_midi_service(&s_midi, now, usb_midi_send);
@@ -386,6 +403,7 @@ bool keyboard_live_command(const char *line)
             if (calibration_begin(board_millis())) s_gui_result=1u;
         }
         else if (calibration_active(&s_cal)) return true;
+        else if (s_raw.engine.config.mode && strncmp(line,"cfg enable ",11u)) return true;
         else if (!strncmp(line, "cfg enable ", 11u) && *p++ == ' ' && decimal(&p, &a) && !*p && a <= 1u) {
             keyboard_raw_enable(&s_raw, a != 0u); s_gui_result = 1u;
         }
@@ -405,6 +423,20 @@ bool keyboard_live_command(const char *line)
      * calibration. GUI snapshots and read-only dump commands above still work. */
 #ifdef HUNTSMAN_KEYBOARD_MODE
     if (calibration_active(&s_cal)) { debug_write("ERR calibration active; cfg calcancel ID to cancel\r\n"); return true; }
+    if (!strcmp(line,"menu status")) {
+        value("MENU fn=",s_menu.fn<s_raw.count && s_raw.down[s_menu.fn]);
+        value(" mode=",s_raw.engine.config.mode);
+        value(" level=",s_raw.engine.config.actuation); value(" saved=",s_raw.engine.config.saved_actuation);
+        value(" brightness=",s_menu.brightness); value("/19 pwm=",keyboard_menu_brightness(&s_menu));
+        value(" reset_confirm=",s_menu.reset_confirmation); value(" ready=",s_menu.confirmation_ready);
+        value(" lower_muted=",s_midi.lower_muted);
+        value(" root=",s_midi.music.root); value(" scale=",s_midi.music.scale);
+        value(" music_page=",s_menu.music_page);
+        debug_write(" key="); debug_write(midi_root_names[s_midi.music.root]);
+        debug_write(" scale_name="); debug_write(midi_scales[s_midi.music.scale].name);
+        debug_write("\r\n");
+        return true;
+    }
 #endif
     if (!strcmp(line, "help"))
     {
@@ -415,6 +447,7 @@ bool keyboard_live_command(const char *line)
                     "keys on requires neutral valid samples; one scan attempt per boot.\r\n");
 #ifdef HUNTSMAN_KEYBOARD_MODE
         debug_write("stream gui | cfg get ID | cfg set ID SENSOR PRESS RELEASE | cfg all ID PRESS RELEASE | cfg enable ID 0/1\r\n"
+                    "menu status; Fn+Tab trigger editor, 1-0 select, Esc saves; Fn+K/L brightness down/up\r\n"
                     "cfg calibrate ID | cfg calcancel ID; Fn+C calibrates in keyboard mode\r\n"
                     "dump read ID ADDRESS (decimal, aligned 64-byte main-flash read; HBD1 binary response)\r\n"
                     "cfg midi ID SENSOR NOTE (0..127, 255=unmapped); Fn+Enter toggles MIDI; LCtrl/LAlt octave-/+\r\n"

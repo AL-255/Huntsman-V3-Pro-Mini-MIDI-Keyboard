@@ -1,6 +1,7 @@
 # Per-key optical calibration
 
-In keyboard mode, hold **Fn+C**, or connect the GUI and choose **Calibrate keys
+In keyboard mode, hold **Fn+C** to preview `CALIBRATION`, then release either
+key to start, or connect the GUI and choose **Calibrate keys
 → device flash**. Keyboard output pauses for the routine. Physical entry
 requires keyboard output enabled and armed; GUI entry also works when disabled.
 
@@ -87,36 +88,57 @@ acquisition consumes hardware scans, not GUI frames.
 
 ## Validation status
 
-Native and modeled ARM tests are provided, including original instruction
-differentials for the flash controller. These do not prove physical erase
-timing or real key holding. A complete physical calibration requires pressing
-all keys on the board; do not describe simulated acquisitions as hardware tests.
+The latest complete application is `keyboard-fn-menu`. Native tests cover
+independent parallel holds, timing, aborts, record validation and simulated
+power-cut boundaries. Compiled ARM tests cover Fn+C/GUI entry, output isolation,
+parallel completion, two-page save/reload and original-controller register
+differentials. The Fn-menu audit also checks that trigger/brightness edits
+and calibration cancellation issue no writes and preserve a loaded record.
 
-Installed 2026-09-05: `build-keyboard-calibration-parallel/huntsman_firmware.bin`,
-SHA256 `6639660b99e8182183304c3939563d14c4243bedfbead3986826cd164aea3084`.
-Application load 67948 bytes, SRAMX 23816/24576, USB RAM 15488/16384, separate
-8 KiB stack. All nine host suites, Tk/PTY UI, compiled USB/keyboard/MIDI/stream
-regressions and original-controller differential/calibration tests passed.
+Build artifact: `build-keyboard-fn-menu/huntsman_firmware.bin`, 131072 bytes,
+SHA256 `c16c30a61a7930db89cabe9276687ed81da8c9328e62b59053ef236c677c0bde`.
+Application load is 78120 bytes, SRAMX 24328/24576 and USB RAM 15488/16384;
+the separate 8 KiB stack is retained. Ten native suites, original lighting-channel
+comparisons, and compiled USB/MIDI/lighting checks pass, including inverse
+brightness, live MIDI mapping masks, right-side octave controls and fixed-range
+modulation/pitch wheels. Enter and the MIDI controls use full channel intensity;
+native tests cover all 20 global brightness levels and compiled I2C checks
+compare their scaled output with ordinary note keys. These are software/register-model results.
+Startup/RESET pairs are press 3500 / release 3600. Native and compiled tests
+check exact crossing/equality behavior, independent of explicit test or GUI pairs.
+The keyboard override tests cover four arrow usages without right modifier bits,
+all twenty Fn shortcuts, both release orders, Fn-held repeated taps and green
+hint channels. MIDI behavior and original trigger-editor differential tests pass.
+Fn+Left Shift tests exercise physical Caps/Shift-row MIDI filtering across all layouts,
+custom mappings, release-only toggles, pending-note cleanup, dark note LEDs,
+mode persistence and unchanged keyboard/wheel behavior. Compiled checks
+exercise the MIDI-only white Left Shift hint, actual USB note packets, mapping retention,
+top-row output and LED channel masks with synthetic input.
+Root/scale tests cover all 120 combinations and 128-note interval predicates,
+modal selection/cancellation, physical selector tables, custom mappings,
+filtered USB packets and matching LED output. The GUI/Tk tests confirm the
+3500/3600 defaults and Space's reserved sustain control. Sustain tests cover
+all layouts, exact Schmitt boundaries, blue lighting, CC64/note ordering,
+queued pedal edges under backpressure, Fn/cleanup rearming and overflow pedal-off.
+These checks do not represent physical root/scale or sustain keypresses.
 
-The authorized updater accepted all 2048 packets and returned at 480 Mbit/s.
-Two independent physical reads of the entire application matched the build.
-Readback verification of the application caused no unexpected USB reset;
-HKG6 telemetry reported valid 61-key scans without optical, lighting or MIDI
-errors.
+The supplied updater has flashed this application through computer-initiated
+bootloader entry. Full 131072-byte readback at physical `0x8000` matches the
+build SHA256 above, with no flash-controller/ECC read errors. Both calibration
+tail pages are byte-for-byte unchanged. After reboot, live HKG6 telemetry
+advances with 61 valid sensors, calibration generation 0 (no saved calibration)
+and zero scan, lighting, MIDI or calibration errors. Live readback confirms
+press 3500 / release 3600 on every sensor.
 
-### Completed physical calibration and retrieval
+Fn+R RESET requires a fresh Y confirmation after all keys are released; N or
+simultaneous Y/N cancels. Tests cover pre-held Y rejection, full-brightness
+confirmation colors and repeated brightness taps with Fn held. RESET storage
+is validated in native and compiled flash models, including both
+occupied slots, ownership/error guards and interrupted-erasure cases. It is
+not executed against the user's saved calibration during hardware validation.
 
-The user completed a calibration run on this build. Read-only retrieval at
-2026-09-05 10:03:08 UTC reported state 6 (complete), 61/61 registered keys,
-saved generation 1, reason/error zero, and no optical, LED or MIDI errors.
-Two independent reads of 0x7d400..0x7d800 matched with no ECC/read holes.
-Slot A at 0x7d400 held a valid layout-1/61-key HKC1 record with verified CRC;
-slot B at 0x7d600 remained entirely FF. Status before/after agreed on generation.
-
-Released endpoints ranged from 3784 to 4016; pressed endpoints ranged from
-197 (Y) to 1269 (Escape). The next-lowest pressed value was 231 (/). These
-are measured optical counts, not evidence of a fault or physical force units.
-Complete per-key CSV/JSON and raw acquisition remain private and Git-ignored.
-This validates one physical acquisition/program/readback, not power-failure
-recovery, endurance or cold-boot loading; those latter paths have offline tests
-where documented, not a performed physical power-cycle test.
+Physical key-combination presses, wheel travel/response in a synthesizer,
+text-animation appearance and release latency, acquisition cadence,
+saved-record cold boot, endurance and power-cut recovery remain unverified on
+this build. A modeled acquisition is not a physical key-holding test. Private
+endpoint exports and flash backups remain excluded from Git.

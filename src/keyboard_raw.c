@@ -1,5 +1,6 @@
 #include "keyboard_raw.h"
 #include "keyboard_layout.h"
+#include "keyboard_menu.h"
 #include <string.h>
 
 void keyboard_raw_invalidate(keyboard_raw_t *s)
@@ -14,15 +15,23 @@ void keyboard_raw_invalidate(keyboard_raw_t *s)
         /* Preserve the completion counter across configuration/faults. Five
          * NEW valid samples must arrive before any new result can complete. */
     }
+    const keyboard_config_t saved=s->engine.config;
     keyboard_engine_init(&s->engine, s->profile);
+    if (saved.profile==s->profile && saved.saved_actuation>=1u && saved.saved_actuation<=10u) {
+        s->engine.config.saved_actuation=s->engine.config.actuation=saved.saved_actuation;
+        s->engine.config.saved_rapid=s->engine.config.rapid=saved.saved_rapid;
+        s->engine.config.rapid_enabled=saved.rapid_enabled;
+        s->engine.config.locked=saved.locked;
+        s->engine.config.revision=saved.revision;
+    }
 }
 
 void keyboard_raw_init(keyboard_raw_t *s)
 {
     memset(s, 0, sizeof(*s));
     for (unsigned i = 0; i < RAW_KEY_COUNT; ++i) {
-        s->press[i] = 3600u;
-        s->release[i] = 3700u;
+        s->press[i] = RAW_DEFAULT_PRESS;
+        s->release[i] = RAW_DEFAULT_RELEASE;
     }
     s->enabled = true;
     keyboard_raw_invalidate(s);
@@ -127,16 +136,28 @@ void keyboard_raw_frame(keyboard_raw_t *s, const uint16_t *raw, uint8_t count,
     if (!valid) { keyboard_raw_invalidate(s); return; }
     s->valid = true;
     if (!s->armed && s->enabled && neutral) {
-        keyboard_engine_init(&s->engine, profile);
+        keyboard_engine_release_all(&s->engine);
         memset(s->down, 0, sizeof(s->down));
         s->armed = true;
     }
+    bool changed[RAW_KEY_COUNT]={false};
+    unsigned fn=RAW_KEY_COUNT;
     for (unsigned i = 0; i < count; ++i) {
         const bool next = s->down[i] ? raw[i] <= s->release[i] : raw[i] < s->press[i];
         velocity_frame(&s->velocity[i], raw[i], next && !s->down[i], raw[i] > s->release[i]);
         if (next == s->down[i]) continue;
         s->down[i] = next;
-        if (s->armed && !s->midi_mode)
-            (void)keyboard_engine_event(&s->engine, keyboard_key_for_sensor(profile, i), next);
+        changed[i]=true;
+        if (keyboard_key_for_sensor(profile,i)==KEY_ID_FN) fn=i;
+    }
+    if (s->armed && !s->midi_mode) {
+        bool (*event)(keyboard_engine_t *,uint8_t,bool)=s->menu_managed ?
+            keyboard_application_event : keyboard_engine_event;
+        /* Resolve simultaneous chords independently of ASIC sensor order. */
+        if (fn<count) (void)event(&s->engine,KEY_ID_FN,s->down[fn]);
+        for (unsigned i=0; i<count; ++i)
+            if (changed[i] && i!=fn && !(s->menu_managed && !s->engine.config.mode &&
+                s->engine.config.fn && keyboard_menu_control(profile,keyboard_key_for_sensor(profile,i))))
+                (void)event(&s->engine,keyboard_key_for_sensor(profile,i),s->down[i]);
     }
 }

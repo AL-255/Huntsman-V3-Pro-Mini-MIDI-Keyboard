@@ -3,7 +3,8 @@
 #include "travel_lighting.h"
 #include <string.h>
 
-enum { ROLE_NOTE, ROLE_FN, ROLE_ENTER, ROLE_DOWN, ROLE_UP };
+enum { ROLE_NOTE, ROLE_FN, ROLE_ENTER, ROLE_DOWN, ROLE_UP,
+       ROLE_MODULATION, ROLE_BEND_DOWN, ROLE_BEND_UP, ROLE_SUSTAIN };
 
 static void clear_voices(keyboard_midi_t *s)
 {
@@ -17,6 +18,8 @@ static void clear_voices(keyboard_midi_t *s)
     memset(s->sent_pressure, 255, sizeof(s->sent_pressure));
     s->head = s->count = 0;
     s->was_armed = false;
+    s->bend=8192; s->modulation=0; s->wheel_sweep=0;
+    s->sustain=false;
 }
 
 void keyboard_midi_init(keyboard_midi_t *s)
@@ -24,20 +27,31 @@ void keyboard_midi_init(keyboard_midi_t *s)
     memset(s, 0, sizeof(*s));
     memset(s->mapping, 255, sizeof(s->mapping));
     clear_voices(s);
+    s->sent_bend=8192;
+    s->music.scale=MIDI_SCALE_CHROMATIC;
 }
 
 void keyboard_midi_abort(keyboard_midi_t *s)
 {
     clear_voices(s);
-    /* Individual Note Offs, All Sound Off, All Notes Off, on channel 1.
+    /* Sustain off first, individual Note Offs, All Sound Off/All Notes Off.
      * Also covers an IN packet already accepted before reset/mode change.
      * Never restart an in-progress sweep on repeated invalid frames. */
-    if (!s->panic) s->panic = 130;
+    if (!s->panic) s->panic = MIDI_CLEANUP_EVENTS;
 }
 
 void keyboard_midi_guard(keyboard_midi_t *s, keyboard_raw_t *raw)
 {
     if (s->was_armed && !raw->armed) keyboard_midi_abort(s);
+}
+
+void keyboard_midi_toggle(keyboard_midi_t *s, keyboard_raw_t *raw, uint32_t now)
+{
+    s->mode ^= 1u;
+    raw->midi_mode=s->mode!=0;
+    ++s->changes; s->changed_at=now;
+    keyboard_midi_abort(s);
+    keyboard_raw_invalidate(raw);
 }
 
 static uint8_t default_note(uint8_t usage)
@@ -57,19 +71,54 @@ static uint8_t default_note(uint8_t usage)
     return MIDI_UNMAPPED;
 }
 
+void keyboard_midi_toggle_lower(keyboard_midi_t *s, keyboard_raw_t *raw)
+{
+    if (!s->mode) return;
+    s->lower_muted=!s->lower_muted;
+    keyboard_midi_abort(s); /* includes pending strikes and shared-pitch owners */
+    keyboard_raw_invalidate(raw); /* all keys neutral before new note edges */
+}
+
+static bool note_enabled(const keyboard_midi_t *s, unsigned sensor)
+{
+    const int note=(int)s->mapping[sensor]+12*(int)s->octave;
+    return s->mapping[sensor]!=MIDI_UNMAPPED && note>=0 &&
+        midi_music_contains(&s->music,(unsigned)note) &&
+        !(s->lower_muted && (s->lower_rows[sensor/8u] & (1u<<(sensor%8u))));
+}
+
+bool keyboard_midi_select_music(keyboard_midi_t *s, keyboard_raw_t *raw, unsigned root, unsigned scale)
+{
+    if(!s->mode || root>=12u || scale>=MIDI_SCALE_COUNT) return false;
+    s->music=(midi_music_config_t){root,scale};
+    ++raw->revision;
+    keyboard_midi_abort(s);
+    keyboard_raw_invalidate(raw);
+    return true;
+}
+
 static void layout(keyboard_midi_t *s, const keyboard_raw_t *raw)
 {
     if (s->profile) keyboard_midi_abort(s);
     s->profile = raw->profile;
     memset(s->mapping, 255, sizeof(s->mapping));
     memset(s->role, 0, sizeof(s->role));
+    memset(s->lower_rows,0,sizeof(s->lower_rows));
     for (unsigned i = 0; i < raw->count; ++i) {
         const uint8_t key = keyboard_key_for_sensor(raw->profile, i);
+        /* Recovered physical IDs: Caps..Enter = 0x1e..0x2b,
+         * Left Shift..Right Shift = 0x2c..0x39, including ISO/JIS extras.
+         * Bottom-row Fn, octave and wheel controls are outside these ranges. */
+        if (key>=KEY_ID_CAPS && key<=0x39u) s->lower_rows[i/8u]|=1u<<(i%8u);
         const keyboard_action_t *a = keyboard_action(raw->profile, key, 0);
         if (key == KEY_ID_FN) s->role[i] = ROLE_FN;
         else if (a && a->type == 2) {
-            if (a->arg0 == 1) s->role[i] = ROLE_DOWN;
-            else if (a->arg0 == 4) s->role[i] = ROLE_UP;
+            if (a->arg0 == 64) s->role[i] = ROLE_DOWN;
+            else if (a->arg0 == 16) s->role[i] = ROLE_UP;
+            else if (a->arg0 == 8) s->role[i] = ROLE_MODULATION;
+            else if (a->arg0 == 1) s->role[i] = ROLE_BEND_DOWN;
+            else if (a->arg0 == 4) s->role[i] = ROLE_BEND_UP;
+            else if (a->arg1 == 0x2c) s->role[i] = ROLE_SUSTAIN;
             else if (a->arg1 == 0x28) s->role[i] = ROLE_ENTER;
             if (a->arg0 == 2) s->mapping[i] = 60; /* left Shift: C4 in MIDI only */
             else if (!a->arg0) s->mapping[i] = default_note(a->arg1);
@@ -99,7 +148,7 @@ static bool note_off(keyboard_midi_t *s, uint8_t note)
 bool keyboard_midi_map(keyboard_midi_t *s, keyboard_raw_t *raw, unsigned sensor, unsigned note)
 {
     if (sensor >= raw->count || !s->profile || (note > 127 && note != MIDI_UNMAPPED) ||
-        s->role[sensor] == ROLE_FN || s->role[sensor] == ROLE_DOWN || s->role[sensor] == ROLE_UP)
+        s->role[sensor] == ROLE_FN || s->role[sensor] >= ROLE_DOWN)
         return false;
     keyboard_midi_abort(s);
     s->mapping[sensor] = note;
@@ -108,30 +157,27 @@ bool keyboard_midi_map(keyboard_midi_t *s, keyboard_raw_t *raw, unsigned sensor,
     return true;
 }
 
+static unsigned wheel_depth(uint16_t value)
+{
+    return value>=3800u ? 0u : value<=1000u ? 2800u : 3800u-value;
+}
+
 void keyboard_midi_frame(keyboard_midi_t *s, keyboard_raw_t *raw,
                          const uint16_t *lower, const uint16_t *upper, uint32_t now)
 {
+    (void)now;
     if (raw->profile && s->profile != raw->profile) layout(s, raw);
     keyboard_midi_guard(s, raw);
     if (!raw->armed) return;
-    s->was_armed = true;
-    bool fn = false, enter = false;
+    s->was_armed=true;
+    bool fn = false;
     int shift = 0;
     for (unsigned i = 0; i < raw->count; ++i) {
         if (s->role[i] == ROLE_FN && raw->down[i]) fn = true;
-        if (s->role[i] == ROLE_ENTER && raw->down[i]) enter = true;
         if (raw->down[i] && !s->previous[i]) {
             if (s->role[i] == ROLE_UP) ++shift;
             if (s->role[i] == ROLE_DOWN) --shift;
         }
-    }
-    if (fn && enter) {
-        s->mode ^= 1u;
-        raw->midi_mode = s->mode != 0;
-        ++s->changes; s->changed_at = now;
-        keyboard_midi_abort(s);
-        keyboard_raw_invalidate(raw); /* consumes chord; requires all released */
-        return;
     }
     if (s->panic) {
         /* A host that does not consume MIDI must not trap the mode chord or
@@ -139,11 +185,33 @@ void keyboard_midi_frame(keyboard_midi_t *s, keyboard_raw_t *raw,
         memcpy(s->previous, raw->down, sizeof(s->previous));
         return;
     }
-    if (s->mode && shift) {
+    if (s->mode && !fn && shift) {
         int octave = s->octave + shift;
         s->octave = octave < -10 ? -10 : octave > 10 ? 10 : octave;
     }
     if (s->mode) {
+        bool sustain=false;
+        for(unsigned i=0;i<raw->count;++i)
+            if(s->role[i]==ROLE_SUSTAIN && raw->down[i] && !fn &&
+               (s->sustain || !s->previous[i])) sustain=true;
+        if(sustain!=s->sustain) {
+            /* Ordered with note edges, never coalesced like analog wheels.
+             * Same-scan pedal changes precede Note Off/On processing. */
+            if(!enqueue(s,0xb0,64,sustain?127:0)) goto overflow;
+            s->sustain=sustain;
+        }
+        int bend=0;
+        s->modulation=0;
+        if (!fn) for (unsigned i=0; i<raw->count; ++i) {
+            unsigned depth=wheel_depth(raw->raw[i]);
+            if (s->role[i]==ROLE_MODULATION) s->modulation=(depth*127u+1400u)/2800u;
+            if (s->role[i]==ROLE_BEND_DOWN) bend-=(int)depth;
+            if (s->role[i]==ROLE_BEND_UP) bend+=(int)depth;
+        }
+        /* Sum travel before quantization: equal opposing pressure is exactly
+         * center despite MIDI's asymmetric negative/positive endpoint sizes. */
+        s->bend=bend<0 ? 8192-((-bend*8192+1400)/2800) :
+                         8192+((bend*8191+1400)/2800);
         memset(s->pressure, 0, sizeof(s->pressure));
         for (unsigned i = 0; i < raw->count; ++i) {
             if (s->previous[i] && !raw->down[i]) {
@@ -168,7 +236,7 @@ void keyboard_midi_frame(keyboard_midi_t *s, keyboard_raw_t *raw,
                 if (s->current[i] == s->phase) s->current[i] = 255;
                 s->pending[i][s->phase] = MIDI_UNMAPPED;
             }
-            if (raw->down[i] && !s->previous[i] && s->mapping[i] != MIDI_UNMAPPED) {
+            if (!fn && raw->down[i] && !s->previous[i] && note_enabled(s,i)) {
                 const int shifted = (int)s->mapping[i] + (int)s->octave * 12;
                 /* Out-of-range notes are muted, never wrapped or clamped. */
                 if (shifted >= 0 && shifted <= 127) {
@@ -194,9 +262,16 @@ overflow:
 void keyboard_midi_service(keyboard_midi_t *s, uint32_t now, midi_send_fn send)
 {
     if (s->panic) {
-        unsigned index = 130u - s->panic;
-        bool ok = index < 128 ? send(8, 0x80, index, 0) : send(11, 0xb0, index == 128 ? 120 : 123, 0);
-        if (ok) --s->panic;
+        unsigned index = MIDI_CLEANUP_EVENTS - s->panic;
+        bool ok = index==0 ? send(11,0xb0,64,0) :
+                  index<=128 ? send(8, 0x80, index-1u, 0) :
+                  index<131 ? send(11, 0xb0, index == 129 ? 120 : 123, 0) :
+                  index==131 ? send(11,0xb0,1,0) : send(14,0xe0,0,64);
+        if (ok) {
+            if (index==131) s->sent_modulation=0;
+            if (index==132) s->sent_bend=8192;
+            --s->panic;
+        }
         return;
     }
     if (s->count) {
@@ -206,6 +281,25 @@ void keyboard_midi_service(keyboard_midi_t *s, uint32_t now, midi_send_fn send)
             --s->count;
         }
         return;
+    }
+    /* Latest-value registers, not the note FIFO. Check both controllers once
+     * per millisecond; a busy endpoint retains only their newest positions. */
+    if (!s->wheel_sweep && (uint32_t)(now-s->wheel_at)>=1u) {
+        s->wheel_sweep=3; s->wheel_at=now;
+    }
+    if (s->wheel_sweep & 1u) {
+        if (s->modulation!=s->sent_modulation) {
+            if (!send(11,0xb0,1,s->modulation)) return;
+            s->sent_modulation=s->modulation;
+        }
+        s->wheel_sweep &= ~1u;
+    }
+    if (s->wheel_sweep & 2u) {
+        if (s->bend!=s->sent_bend) {
+            if (!send(14,0xe0,s->bend & 127u,s->bend>>7u)) return;
+            s->sent_bend=s->bend;
+        }
+        s->wheel_sweep &= ~2u;
     }
     if (!s->pressure_sweep && (uint32_t)(now - s->pressure_at) >= 10u) {
         s->pressure_sweep = true; s->pressure_cursor = 0; s->pressure_at = now;
@@ -223,8 +317,6 @@ void keyboard_midi_service(keyboard_midi_t *s, uint32_t now, midi_send_fn send)
 void keyboard_midi_lights(const keyboard_midi_t *s, uint8_t *frame, uint32_t now)
 {
     if (!s->profile) return;
-    const uint32_t elapsed = now - s->changed_at;
-    const bool flash = s->changes && elapsed < 600u && (elapsed / 150u) % 2u == 0u;
     unsigned magnitude = s->octave < 0 ? -(int)s->octave : s->octave;
     if (magnitude > 10u) magnitude = 10u;
     /* Full period 1200 ms at +/-1, down to 120 ms at +/-10. Minimum
@@ -236,17 +328,19 @@ void keyboard_midi_lights(const keyboard_midi_t *s, uint8_t *frame, uint32_t now
         const bool octave_key = s->mode &&
             ((s->octave < 0 && s->role[i] == ROLE_DOWN) ||
              (s->octave > 0 && s->role[i] == ROLE_UP));
-        if (!flash && s->role[i] != ROLE_ENTER && !octave_key) continue;
         const lighting_channels_t *ch = &g_lighting_channels[s->profile - 1][i];
         uint8_t *p = frame + ch->controller * 192u;
-        if (!flash && octave_key) {
-            p[ch->red] = blink_on ? 128 : 0;
-            p[ch->green] = blink_on ? 48 : 0;
-            p[ch->blue] = 0;
+        if (s->mode && !note_enabled(s,i))
+            p[ch->red]=p[ch->green]=p[ch->blue]=0;
+        /* Mode/octave hints remain explicit overlays, not note backlighting. */
+        if (s->role[i] != ROLE_ENTER && !(s->mode && s->role[i]>=ROLE_DOWN)) continue;
+        if (octave_key) {
+            p[ch->red] = p[ch->green] = 0;
+            p[ch->blue] = blink_on ? 255 : 0;
             continue;
         }
         p[ch->red] = 0;
-        p[ch->green] = s->mode ? 0 : flash ? 128 : 24;
-        p[ch->blue] = s->mode ? (flash ? 128 : 24) : 0;
+        p[ch->green] = s->mode ? 0 : 255;
+        p[ch->blue] = s->mode ? 255 : 0;
     }
 }

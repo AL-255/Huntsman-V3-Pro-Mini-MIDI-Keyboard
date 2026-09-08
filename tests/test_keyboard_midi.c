@@ -1,4 +1,5 @@
 #include "keyboard_midi.h"
+#include "keyboard_menu.h"
 #include "keyboard_layout.h"
 #include "travel_lighting.h"
 #include <assert.h>
@@ -7,6 +8,7 @@
 
 static keyboard_raw_t raw;
 static keyboard_midi_t midi;
+static keyboard_menu_t menu;
 static uint16_t values[65], lower[65], upper[65];
 static uint8_t log_events[20000][4];
 static unsigned logged, frames;
@@ -35,7 +37,14 @@ static unsigned fn_sensor(void)
 }
 static void step(void)
 {
+    keyboard_config_t before=raw.engine.config;
     keyboard_raw_frame(&raw,values,raw.count ? raw.count : 61,raw.profile ? raw.profile : 1,true);
+    uint8_t action=keyboard_menu_frame(&menu,&raw,lower,upper,&before,frames/8,false,midi.lower_muted,&midi.music);
+    if (action==MENU_MODE)
+        keyboard_midi_toggle(&midi,&raw,frames/8);
+    if (action==MENU_LOWER) keyboard_midi_toggle_lower(&midi,&raw);
+    if (action==MENU_SELECT_KEY) assert(keyboard_midi_select_music(&midi,&raw,menu.selection,midi.music.scale));
+    if (action==MENU_SELECT_SCALE) assert(keyboard_midi_select_music(&midi,&raw,midi.music.root,menu.selection));
     keyboard_midi_frame(&midi,&raw,lower,upper,frames++/8);
 }
 static void drain(void)
@@ -45,6 +54,7 @@ static void drain(void)
 static void init(void)
 {
     keyboard_raw_init(&raw); keyboard_midi_init(&midi);
+    keyboard_menu_init(&menu); raw.menu_managed=true;
     logged=frames=0; blocked=false;
     for (unsigned i=0;i<65;++i) { values[i]=3900; lower[i]=1000; upper[i]=3900; }
     step(); assert(raw.armed && !midi.mode);
@@ -53,11 +63,12 @@ static void toggle(void)
 {
     const unsigned fn=fn_sensor(), ent=sensor(0x28,0);
     const unsigned mode=midi.mode;
-    values[fn]=values[ent]=3500; step();
-    assert(midi.mode==(mode^1) && !raw.armed);
+    values[fn]=values[ent]=2400; step();
+    assert(midi.mode==mode && !raw.armed && menu.pending==MENU_MODE);
     for (unsigned i=0; i<20; ++i) step();
-    assert(midi.mode==(mode^1)); /* holding the chord never repeats */
+    assert(midi.mode==mode); /* holding previews without changing mode */
     values[fn]=values[ent]=3900;
+    step(); assert(midi.mode==(mode^1));
     drain(); step(); logged=0;
 }
 static unsigned events(unsigned status,unsigned note)
@@ -68,8 +79,8 @@ static unsigned events(unsigned status,unsigned note)
 }
 static void press_fit(unsigned i)
 {
-    values[i]=3500; step();
-    for (unsigned j=1;j<=5;++j) { values[i]=3500-j*100; step(); }
+    values[i]=2400; step();
+    for (unsigned j=1;j<=5;++j) { values[i]=2400-j*100; step(); }
 }
 static void default_mapping(void)
 {
@@ -106,20 +117,20 @@ static void velocity_pressure_and_modes(void)
     assert(events(0xa0,72)==1);
     values[tab]=1000; step(); frames+=80; drain();
     assert(log_events[logged-1][1]==0xa0 && log_events[logged-1][3]==127);
-    values[tab]=3700; step(); drain(); assert(!events(0x80,72));
-    values[tab]=3701; step(); drain(); assert(events(0x80,72)==1);
+    values[tab]=3600; step(); drain(); assert(!events(0x80,72));
+    values[tab]=3601; step(); drain(); assert(events(0x80,72)==1);
     press_fit(tab); drain();
     toggle(); assert(!midi.mode && !raw.midi_mode);
     values[tab]=3900; step(); assert(raw.armed);
     uint8_t rgb[LIGHTING_FRAME_SIZE]={0};
     keyboard_midi_lights(&midi,rgb,midi.changed_at);
-    const lighting_channels_t *c=&g_lighting_channels[0][tab];
-    assert(rgb[c->green]==128 && rgb[c->blue]==0);
+    const lighting_channels_t *c=&g_lighting_channels[0][sensor(0x28,0)];
+    assert(rgb[c->green]==255 && rgb[c->blue]==0 && !menu.text.length);
 }
 static void short_taps_and_overlap(void)
 {
     init(); toggle(); const unsigned tab=sensor(0x2b,0);
-    for(unsigned i=0;i<6;++i) { values[tab]=i%2 ? 3900 : 3500; step(); }
+    for(unsigned i=0;i<6;++i) { values[tab]=i%2 ? 3900 : 2400; step(); }
     for(unsigned i=0;i<5;++i) step();
     drain(); assert(events(0x90,72)==3 && events(0x80,72)==3);
     for(unsigned i=0;i<logged;++i) if(log_events[i][1]==0x90) assert(log_events[i][3]>=1);
@@ -127,11 +138,11 @@ static void short_taps_and_overlap(void)
 static void shift_and_filtered_strike(void)
 {
     init(); const unsigned shift=sensor(0,2);
-    values[shift]=3500; step();
+    values[shift]=2400; step();
     assert(raw.engine.report.modifiers==2);
     values[shift]=3900; step(); toggle();
-    values[shift]=3500; step();
-    const uint16_t points[]={3400,3300,2300,2200,2100};
+    values[shift]=2400; step();
+    const uint16_t points[]={2300,2200,1200,1100,1000};
     for(unsigned i=0;i<5;++i) {values[shift]=points[i]; step();}
     drain(); assert(events(0x90,60)==1 && log_events[0][3]==23);
     assert(raw.engine.report.modifiers==0);
@@ -139,9 +150,9 @@ static void shift_and_filtered_strike(void)
 }
 static void octave_and_duplicates(void)
 {
-    init(); toggle(); unsigned tab=sensor(0x2b,0), q=sensor(0x14,0), up=sensor(0,4);
+    init(); toggle(); unsigned tab=sensor(0x2b,0), q=sensor(0x14,0), up=sensor(0,16);
     press_fit(tab); drain();
-    values[up]=3500; step(); for(unsigned i=0;i<10;++i) step();
+    values[up]=2400; step(); for(unsigned i=0;i<10;++i) step();
     assert(midi.octave==1); values[up]=3900; step();
     values[tab]=3900; step(); drain(); assert(events(0x80,72)==1 && !events(0x80,84));
     press_fit(tab); drain(); assert(events(0x90,84)==1);
@@ -164,7 +175,8 @@ static void faults_and_backpressure(void)
     assert(midi.errors==1 && midi.panic && !midi.count && !midi.refs[72]);
     /* Busy MIDI must still allow the mode chord and normal HID recovery. */
     values[tab]=3900; step();
-    values[fn_sensor()]=values[sensor(0x28,0)]=3500; step(); assert(!midi.mode);
+    values[fn_sensor()]=values[sensor(0x28,0)]=2400; step(); assert(midi.mode);
+    values[fn_sensor()]=values[sensor(0x28,0)]=3900; step(); assert(!midi.mode);
     blocked=false; drain(); assert(!midi.panic && events(0xb0,120)==1 && events(0xb0,123)==1);
     assert(events(0x80,72)==1);
     for(unsigned i=0;i<65;++i) values[i]=3900;
@@ -181,11 +193,11 @@ static void polyphony(void)
         bool play[65]={0};
         for (unsigned i=0;i<raw.count;++i) {
             play[i]=midi.role[i]==0;
-            if (play[i]) { midi.mapping[i]=i; values[i]=3500; ++voices; }
+            if (play[i]) { midi.mapping[i]=i; values[i]=2400; ++voices; }
         }
         step();
         for(unsigned j=1;j<=5;++j) {
-            for(unsigned i=0;i<raw.count;++i) if(play[i]) values[i]=3500-j*(100+i);
+            for(unsigned i=0;i<raw.count;++i) if(play[i]) values[i]=2400-j*(100+i);
             step();
         }
         drain();
@@ -207,8 +219,8 @@ static void octave_lights(void)
     for(unsigned profile=1;profile<=3;++profile) {
         init(); raw.profile=profile; raw.count=profile==3 ? 65 : 60+profile;
         step(); drain();
-        midi.mode=1; /* isolate overlay from the transient mode-change pulses */
-        const unsigned down=sensor(0,1), up=sensor(0,4);
+        midi.mode=1;
+        const unsigned down=sensor(0,64), up=sensor(0,16);
         uint8_t rgb[LIGHTING_FRAME_SIZE];
         for(int shift=-10;shift<=10;++shift) {
             midi.octave=shift;
@@ -221,11 +233,14 @@ static void octave_lights(void)
                     const lighting_channels_t *c=&g_lighting_channels[profile-1][i];
                     const unsigned offset=c->controller*192u;
                     if(i==(shift<0 ? down : up) && shift) {
-                        assert(rgb[offset+c->red]==(phase ? 0 : 128));
-                        assert(rgb[offset+c->green]==(phase ? 0 : 48));
-                        assert(rgb[offset+c->blue]==0);
+                        assert(rgb[offset+c->red]==0 && rgb[offset+c->green]==0);
+                        assert(rgb[offset+c->blue]==(phase ? 0 : 255));
+                    } else if(midi.role[i]>=3) {
+                        assert(rgb[offset+c->red]==0 && rgb[offset+c->green]==0 && rgb[offset+c->blue]==255);
                     } else if(midi.role[i]!=2) { /* Enter retains mode marker */
-                        assert(rgb[offset+c->red]==7 && rgb[offset+c->green]==7 && rgb[offset+c->blue]==7);
+                        int note=(int)midi.mapping[i]+12*shift;
+                        unsigned v=midi.mapping[i]==MIDI_UNMAPPED || note<0 || note>127 ? 0 : 7;
+                        assert(rgb[offset+c->red]==v && rgb[offset+c->green]==v && rgb[offset+c->blue]==v);
                     }
                 }
             }
@@ -234,16 +249,567 @@ static void octave_lights(void)
         memset(rgb,7,sizeof(rgb)); keyboard_midi_lights(&midi,rgb,0);
         const lighting_channels_t *c=&g_lighting_channels[profile-1][down];
         assert(rgb[c->controller*192u+c->red]==7); /* keyboard mode: no octave overlay */
-        midi.mode=1; midi.changes=1; midi.changed_at=0;
-        keyboard_midi_lights(&midi,rgb,0);
-        assert(rgb[c->controller*192u+c->red]==0 && rgb[c->controller*192u+c->blue]==128);
+        midi.octave=0;
+        for(unsigned mode=0;mode<2;++mode) for(unsigned level=0;level<20;++level) {
+            midi.mode=mode; menu.brightness=level;
+            memset(rgb,255,sizeof(rgb));
+            keyboard_midi_lights(&midi,rgb,0);
+            keyboard_menu_lights(&menu,&raw,lower,upper,rgb,0,mode,false);
+            unsigned pwm=keyboard_menu_brightness(&menu);
+            for(unsigned i=0;i<raw.count;++i) {
+                c=&g_lighting_channels[profile-1][i];
+                unsigned offset=c->controller*192u;
+                if(midi.role[i]==2 || (mode && midi.role[i]>=3)) {
+                    assert(rgb[offset+c->red]==0);
+                    assert(rgb[offset+c->green]==(mode?0:pwm));
+                    assert(rgb[offset+c->blue]==(mode?pwm:0));
+                } else if(i==sensor(0x2b,0)) {
+                    assert(rgb[offset+c->red]==pwm && rgb[offset+c->green]==pwm && rgb[offset+c->blue]==pwm);
+                }
+            }
+        }
     }
-    puts("PASS octave LEDs: both signs/all magnitudes/all layouts, zero/keyboard inactive, mode pulse priority");
+    puts("PASS octave LEDs: both signs/all magnitudes/all layouts, zero/keyboard inactive");
 }
+
+static void inverse_lighting(void)
+{
+    for(unsigned profile=1;profile<=3;++profile) {
+        init(); raw.profile=profile; raw.count=profile==3?65:60+profile; step();
+        uint8_t rgb[LIGHTING_FRAME_SIZE];
+        for(unsigned sample=0;sample<=4097;++sample) {
+            for(unsigned i=0;i<raw.count;++i) values[i]=sample;
+            lighting_travel_frame(profile,values,lower,upper,true,rgb);
+            unsigned expected=sample && sample<=4096 ? 255-lighting_travel_pwm(sample,1000,3900) : 0;
+            for(unsigned i=0;i<raw.count;++i) {
+                const lighting_channels_t *c=&g_lighting_channels[profile-1][i];
+                unsigned off=c->controller*192;
+                assert(rgb[off+c->red]==expected && rgb[off+c->green]==expected && rgb[off+c->blue]==expected);
+            }
+        }
+        for(unsigned i=0;i<raw.count;++i) values[i]=3900;
+        /* Mask follows live GUI mappings, in either direction. */
+        const unsigned a=sensor(4,0), space=sensor(0x2c,0);
+        for(unsigned mode=0;mode<2;++mode) for(unsigned mapped=0;mapped<2;++mapped) {
+            midi.mode=mode;
+            midi.mapping[a]=mapped?60:MIDI_UNMAPPED;
+            midi.mapping[space]=mapped?61:MIDI_UNMAPPED;
+            lighting_travel_frame(profile,values,lower,upper,true,rgb);
+            keyboard_midi_lights(&midi,rgb,0);
+            for(unsigned i=0;i<raw.count;++i) {
+                if(midi.role[i]==2 || (mode && midi.role[i]>=3)) continue; /* control indicators */
+                const lighting_channels_t *c=&g_lighting_channels[profile-1][i];
+                unsigned off=c->controller*192;
+                unsigned v=mode && midi.mapping[i]==MIDI_UNMAPPED?0:255;
+                assert(rgb[off+c->red]==v && rgb[off+c->green]==v && rgb[off+c->blue]==v);
+            }
+        }
+        lower[a]=0;
+        lighting_travel_frame(profile,values,lower,upper,true,rgb);
+        const lighting_channels_t *c=&g_lighting_channels[profile-1][a];
+        assert(!rgb[c->controller*192+c->red]);
+        lighting_travel_frame(profile,values,lower,upper,false,rgb);
+        for(unsigned i=0;i<sizeof(rgb);++i) assert(!rgb[i]);
+    }
+    puts("PASS inverse lighting: all layouts/ADC values, invalid fail-dark, keyboard all-key and live MIDI mapping masks");
+}
+
+static void text_frame(const keyboard_text_t *text, const char *word, int highlight, uint32_t now)
+{
+    uint8_t rgb[LIGHTING_FRAME_SIZE], expected[LIGHTING_FRAME_SIZE]={0};
+    memset(rgb,9,sizeof(rgb));
+    assert(keyboard_text_render(text,rgb,now));
+    for(unsigned pass=0;pass<2;++pass) {
+        for(unsigned j=0;word[j];++j) {
+            if(pass && (int)j!=highlight) continue;
+            unsigned usage=word[j]=='+'?0x2e:word[j]=='-'?0x2d:word[j]=='?'?0x38:word[j]-'A'+4;
+            const lighting_channels_t *c=&g_lighting_channels[raw.profile-1][sensor(usage,0)];
+            unsigned offset=c->controller*192u;
+            unsigned pwm=pass ? 255 : 77;
+            expected[offset+c->red]=(text->color[0]*pwm+127)/255;
+            expected[offset+c->green]=(text->color[1]*pwm+127)/255;
+            expected[offset+c->blue]=(text->color[2]*pwm+127)/255;
+        }
+    }
+    assert(!memcmp(rgb,expected,sizeof(rgb)));
+}
+
+static void text_display(void)
+{
+    for(unsigned profile=1;profile<=3;++profile) {
+        init(); raw.profile=profile; raw.count=profile==3 ? 65 : 60+profile;
+        step(); drain();
+        keyboard_text_t text={0};
+        const uint32_t start=UINT32_MAX-99; /* the first letter spans timer wrap */
+        char word[]="mIdi!";
+        keyboard_text_start(&text,profile,word,start);
+        memset(word,'X',sizeof(word)); /* start owns its input */
+        assert(text.length==4);
+        for(unsigned t=0;t<3000;++t) {
+            unsigned phase=t%1300;
+            text_frame(&text,"MIDI",phase<800 ? (int)(phase/200) : -1,start+t);
+        }
+        keyboard_text_start(&text,profile,"KEYBOARD",100);
+        for(unsigned t=0;t<4500;++t) {
+            unsigned phase=t%2100;
+            text_frame(&text,"KEYBOARD",phase<1600 ? (int)(phase/200) : -1,100+t);
+        }
+        for (unsigned sign=0;sign<2;++sign) {
+            const char *label=sign?"LIGHT+":"LIGHT-";
+            keyboard_text_start(&text,profile,label,0);
+            assert(text.length==6);
+            for (unsigned t=0;t<1800;++t) {
+                unsigned phase=t%1700;
+                text_frame(&text,label,phase<1200?(int)(phase/200):-1,t);
+            }
+        }
+        uint8_t rgb[LIGHTING_FRAME_SIZE]; memset(rgb,9,sizeof(rgb));
+        keyboard_text_stop(&text);
+        assert(!keyboard_text_render(&text,rgb,101));
+        for(unsigned i=0;i<sizeof(rgb);++i) assert(rgb[i]==9);
+        keyboard_text_start(&text,profile,"",0); assert(!text.length);
+        keyboard_text_start(&text,profile," 123!",0); assert(!text.length);
+        keyboard_text_start(&text,profile,"RESET?",0);
+        for (unsigned t=0; t<3400; ++t) {
+            unsigned phase=t%1700;
+            text_frame(&text,"RESET?",phase<1200?(int)(phase/200):-1,t);
+        }
+        keyboard_text_start(&text,profile,NULL,0); assert(!text.length);
+        keyboard_text_start(&text,0,"MIDI",0); assert(!text.length);
+        keyboard_text_start(&text,4,"MIDI",0); assert(!text.length);
+        keyboard_text_start(&text,profile,"ABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ",0);
+        assert(text.length==KEYBOARD_TEXT_MAX);
+
+        const unsigned fn=fn_sensor(), ent=sensor(0x28,0);
+        const unsigned cancel_at[]={0,199,200,799,800,1299,1600,2099,3000,3000};
+        for(unsigned release=0;release<sizeof(cancel_at)/sizeof(cancel_at[0]);++release) {
+            unsigned mode=midi.mode;
+            values[fn]=values[ent]=2400; step();
+            assert(midi.mode==mode && menu.text.length);
+            uint32_t began=menu.text.started_at, changes=midi.changes;
+            assert(menu.text.color[1]==(mode?255:0) && menu.text.color[2]==(mode?0:255));
+            text_frame(&menu.text,mode ? "KEYBOARD" : "MIDI",0,began);
+            /* Held in hysteresis, despite down[] clearing on mode switch. */
+            values[fn]=raw.release[fn]; values[ent]=raw.release[ent];
+            frames+=8*cancel_at[release]; step();
+            assert(menu.text.length && menu.text.started_at==began && midi.changes==changes);
+            unsigned lifted=(release&1u) ? fn : ent;
+            values[lifted]=raw.release[lifted]+1; step();
+            assert(!menu.text.length && midi.changes==changes+1 && midi.mode==(mode^1) && !raw.armed);
+            values[lifted]=2400; step(); /* repressing one key cannot restart */
+            assert(!menu.text.length && midi.changes==changes+1);
+            values[fn]=values[ent]=3900; step(); drain();
+            assert(raw.armed);
+        }
+        values[fn]=values[ent]=2400; step(); assert(menu.text.length);
+        keyboard_raw_frame(&raw,values,raw.count,profile,false);
+        keyboard_config_t before=raw.engine.config;
+        keyboard_menu_frame(&menu,&raw,lower,upper,&before,frames/8,false,midi.lower_muted,&midi.music);
+        assert(!menu.text.length);
+        values[fn]=values[ent]=3900; step(); drain();
+        values[fn]=values[ent]=2400; step(); assert(menu.text.length);
+        keyboard_menu_cancel(&menu); assert(!menu.text.length);
+    }
+    puts("PASS text display: exact phases/repeats/all layouts, duplicate letters, wrap, cancellation, Schmitt-held mode chord");
+}
+static void wheels(void)
+{
+    for (unsigned profile=1; profile<=3; ++profile) {
+        init(); raw.profile=profile; raw.count=profile==3?65:60+profile;
+        step(); drain(); toggle();
+        unsigned down=sensor(0,1), up=sensor(0,4), mod=sensor(0,8);
+        const unsigned controls[]={down,up,mod,sensor(0,64),sensor(0,16)};
+        for (unsigned i=0; i<5; ++i) {
+            assert(midi.mapping[controls[i]]==MIDI_UNMAPPED);
+            assert(!keyboard_midi_map(&midi,&raw,controls[i],60));
+        }
+        for (unsigned value=1; value<=4096; ++value) {
+            unsigned depth=value>=3800?0:value<=1000?2800:3800-value;
+            values[mod]=values[up]=value; step();
+            assert(midi.modulation==(depth*127+1400)/2800);
+            assert(midi.bend==8192+(depth*8191+1400)/2800);
+            values[down]=value; step(); assert(midi.bend==8192); /* exact cancellation */
+            values[up]=3900; step(); assert(midi.bend==8192-(depth*8192+1400)/2800);
+            values[down]=3900;
+        }
+        assert(!midi.octave && !midi.count && !midi.errors);
+        values[down]=values[up]=values[mod]=3800; step(); frames+=8; drain(); logged=0;
+        /* Wheels work above the configurable Schmitt trigger, without notes. */
+        values[mod]=values[up]=3700; step(); assert(!raw.down[mod] && midi.modulation==5 && midi.bend>8192);
+        frames+=8; drain(); assert(events(0xb0,1)==1);
+        values[mod]=values[up]=1000; step(); frames+=8; drain();
+        assert(midi.sent_modulation==127 && midi.sent_bend==16383);
+        assert(log_events[logged-1][1]==0xe0 && log_events[logged-1][2]==127 && log_events[logged-1][3]==127);
+        values[up]=3800; values[down]=1000; step(); frames+=8; drain();
+        assert(midi.sent_bend==0);
+        assert(log_events[logged-1][1]==0xe0 && !log_events[logged-1][2] && !log_events[logged-1][3]);
+        /* Backpressure keeps latest wheel values, never fills the note FIFO. */
+        blocked=true; logged=0;
+        values[down]=3800;
+        for (unsigned i=0; i<100; ++i) {
+            values[mod]=values[up]=1000+i*20; step(); frames+=8; drain();
+        }
+        assert(!logged && !midi.count && !midi.errors);
+        blocked=false; frames+=8; drain();
+        assert(logged==2 && midi.sent_modulation==midi.modulation && midi.sent_bend==midi.bend);
+        values[mod]=values[up]=3800; step(); frames+=8; drain();
+        assert(midi.sent_modulation==0 && midi.sent_bend==8192);
+        for (unsigned i=0; i<logged; ++i) assert(log_events[i][1]!=0x90);
+        values[mod]=values[up]=1000; step(); frames+=8; drain(); logged=0;
+        keyboard_raw_invalidate(&raw); keyboard_midi_guard(&midi,&raw);
+        blocked=true; drain(); assert(midi.panic==MIDI_CLEANUP_EVENTS);
+        keyboard_midi_abort(&midi); assert(midi.panic==MIDI_CLEANUP_EVENTS);
+        blocked=false; drain();
+        assert(logged==MIDI_CLEANUP_EVENTS && log_events[131][1]==0xb0 && log_events[131][2]==1 && !log_events[131][3]);
+        assert(log_events[132][1]==0xe0 && log_events[132][2]==0 && log_events[132][3]==64);
+        assert(log_events[0][1]==0xb0 && log_events[0][2]==64 && !log_events[0][3]);
+        assert(midi.sent_modulation==0 && midi.sent_bend==8192);
+    }
+    init(); const unsigned modifiers[]={1,4,8,16,64};
+    for (unsigned i=0; i<5; ++i) {
+        unsigned at=sensor(0,modifiers[i]); values[at]=1000; step(); drain();
+        assert(raw.engine.report.modifiers==(modifiers[i]>=16?0:modifiers[i]) && !logged);
+        if(modifiers[i]>=16) assert(keyboard_report_get_usage(&raw.engine.report,modifiers[i]==16?0x4f:0x50));
+        values[at]=3900; step();
+    }
+    puts("PASS wheels: all ADC values/layouts, exact cancellation/endpoints, independent Schmitt, packets/latest-only backpressure, cleanup and keyboard-mode controls");
+}
+static void menu_input_isolation(void)
+{
+    for (unsigned mode=0; mode<2; ++mode) {
+        init(); if (mode) toggle();
+        values[menu.fn]=2400; step();
+        for (unsigned i=0; i<4; ++i) {
+            press_fit(i&1 ? menu.l : menu.k);
+            values[menu.k]=values[menu.l]=3900; step(); drain();
+            assert(menu.brightness_session && !raw.armed);
+        }
+        values[menu.fn]=3900; step(); drain();
+        values[menu.fn]=values[menu.r]=2400; step();
+        values[menu.fn]=values[menu.r]=3900; step(); step();
+        assert(menu.reset_confirmation && menu.confirmation_ready);
+        /* Unrelated notes/typing and N itself must not escape confirmation. */
+        press_fit(sensor(0x04,0)); drain();
+        assert(menu.reset_confirmation && !raw.armed);
+        assert(!keyboard_report_get_usage(&raw.engine.report,0x04));
+        press_fit(menu.n); drain(); assert(!menu.reset_confirmation && !raw.armed);
+        for (unsigned i=0; i<logged; ++i) assert(log_events[i][1]!=0x90 && log_events[i][1]!=0xa0);
+        for (unsigned i=0; i<raw.count; ++i) values[i]=3900;
+        step(); drain(); assert(raw.armed);
+        press_fit(sensor(0x04,0)); drain();
+        if (mode) assert(events(0x90,61)==1);
+        else assert(keyboard_report_get_usage(&raw.engine.report,0x04));
+    }
+}
+static void lower_toggle(unsigned release_fn_first)
+{
+    const bool old=midi.lower_muted;
+    values[menu.fn]=values[menu.shift]=2400; step();
+    assert(menu.pending==MENU_LOWER && midi.lower_muted==old);
+    assert(menu.text.length==(old?8u:9u)); /* LOWER-ON / LOWER-OFF */
+    const char *word=old?"LOWER-ON":"LOWER-OFF";
+    for(unsigned t=0;t<menu.text.length*200u+500u;++t)
+        text_frame(&menu.text,word,t<menu.text.length*200u?(int)(t/200u):-1,menu.text.started_at+t);
+    for (unsigned i=0;i<20;++i) step();
+    assert(midi.lower_muted==old);
+    values[release_fn_first?menu.fn:menu.shift]=3900; step();
+    assert(midi.lower_muted!=old && !raw.armed);
+    for (unsigned i=0;i<20;++i) step();
+    assert(midi.lower_muted!=old); /* no repeated action while held */
+    values[menu.fn]=values[menu.shift]=3900; step(); drain(); step(); logged=0;
+}
+
+static bool physical_lower(unsigned profile,unsigned sensor_index)
+{
+    for(unsigned p=0;p<KEYBOARD_GRID_SIZE;++p) {
+        const keyboard_grid_cell_t *c=&g_keyboard_grid[p];
+        unsigned index=profile==1?c->ansi:profile==2?c->iso:c->jis;
+        if(index==sensor_index) return (p>=27 && p<=44) || (p>=57 && p<=61) || (p>=63 && p<=67);
+    }
+    assert(false); return false;
+}
+
+static void lower_rows(void)
+{
+    for(unsigned profile=1;profile<=3;++profile) {
+        init(); raw.profile=profile; raw.count=profile==3?65:60+profile;
+        keyboard_raw_invalidate(&raw); step(); drain();
+        /* Fn+Left Shift must not become a settings action in keyboard mode. */
+        values[menu.fn]=values[menu.shift]=2400; step(); assert(!menu.pending && !midi.lower_muted);
+        values[menu.fn]=values[menu.shift]=3900; step();
+        toggle();
+        values[menu.shift]=2400; step(); values[menu.fn]=2400; step();
+        assert(!menu.pending); /* preheld S cannot become a settings press */
+        values[menu.shift]=3900; step(); values[menu.shift]=2400; step();
+        assert(menu.pending==MENU_LOWER);
+        keyboard_raw_enable(&raw,false); step(); assert(!menu.pending && !midi.lower_muted);
+        values[menu.fn]=values[menu.shift]=3900;
+        keyboard_raw_enable(&raw,true); step(); drain();
+        /* Remap every assignable sensor, including Enter and unassigned extras.
+         * Filtering must depend on physical rows, never note number/defaults. */
+        for(unsigned i=0;i<raw.count;++i) {
+            (void)keyboard_midi_map(&midi,&raw,i,20+i); step(); drain();
+        }
+        uint8_t saved[65]; memcpy(saved,midi.mapping,sizeof(saved));
+        lower_toggle(profile%2); assert(midi.lower_muted);
+        for(unsigned i=0;i<raw.count;++i) {
+            bool lower_row=physical_lower(profile,i);
+            assert(!!(midi.lower_rows[i/8] & (1u<<(i%8)))==lower_row);
+            if(midi.mapping[i]==255) continue;
+            logged=0; press_fit(i); drain();
+            assert(events(0x90,20+i)==!lower_row);
+            frames+=80; step(); drain();
+            if(lower_row) assert(!events(0xa0,20+i));
+            values[i]=3900; step(); drain();
+            assert(events(0x80,20+i)==!lower_row);
+        }
+        uint8_t lights[LIGHTING_FRAME_SIZE]; memset(lights,255,sizeof(lights));
+        keyboard_midi_lights(&midi,lights,0);
+        for(unsigned i=0;i<raw.count;++i) if(physical_lower(profile,i)) {
+            const lighting_channels_t *ch=&g_lighting_channels[profile-1][i];
+            uint8_t *p=lights+ch->controller*192u;
+            assert(!p[ch->red] && !p[ch->green] && p[ch->blue]==(i==menu.enter?255:0));
+        }
+        const unsigned ctrl=sensor(0,1),alt=sensor(0,4),win=sensor(0,8),right=sensor(0,16);
+        values[ctrl]=1000; values[win]=1000; values[right]=1000; step();
+        assert(midi.bend==0 && midi.modulation==127 && midi.octave==1);
+        values[ctrl]=3900; values[alt]=1000; step(); assert(midi.bend==16383);
+        for(unsigned i=0;i<raw.count;++i) values[i]=3900;
+        step(); drain(); midi.octave=0;
+        toggle(); assert(!midi.mode && midi.lower_muted);
+        press_fit(menu.shift); assert(raw.engine.report.modifiers==2);
+        values[menu.shift]=3900; step(); toggle(); assert(midi.lower_muted);
+        lower_toggle(!(profile%2)); assert(!midi.lower_muted && !memcmp(saved,midi.mapping,sizeof(saved)));
+        press_fit(menu.shift); drain(); assert(events(0x90,20+menu.shift)==1);
+        /* Preview cancels a sounding lower note and an upper pending strike,
+         * even when USB is backpressured. Cleanup must finish before replay. */
+        values[sensor(0x2b,0)]=2400; step();
+        blocked=true; values[menu.fn]=2400; values[menu.shift]=3900; step();
+        values[menu.shift]=2400; step(); assert(menu.pending==MENU_LOWER && midi.panic);
+        values[menu.shift]=values[menu.fn]=3900; step();
+        assert(midi.lower_muted && midi.panic && !midi.count);
+        for(unsigned i=0;i<128;++i) assert(!midi.refs[i]);
+        for(unsigned i=0;i<raw.count;++i) values[i]=3900;
+        blocked=false; drain(); step(); logged=0;
+        for(unsigned i=0;i<8;++i) step();
+        drain();
+        assert(!events(0x90,20+sensor(0x2b,0)) && !events(0x90,20+menu.shift));
+        keyboard_midi_init(&midi); assert(!midi.lower_muted);
+    }
+    puts("PASS lower rows: Fn+Left Shift release toggle, all layouts/custom maps, dark notes, mode persistence, wheels, pending/shared cleanup and startup defaults");
+}
+
+static void music_data(void)
+{
+    const unsigned intervals[][12]={{0,2,4,5,7,9,11},{0,2,3,5,7,8,10},
+        {0,2,3,5,7,9,10},{0,1,3,5,7,8,10},{0,2,4,6,7,9,11},
+        {0,2,4,5,7,9,10},{0,1,3,5,6,8,10},{0,2,4,7,9},{0,3,5,7,10},
+        {0,1,2,3,4,5,6,7,8,9,10,11}};
+    const unsigned counts[]={7,7,7,7,7,7,7,5,5,12};
+    const char *selectors="JIDHYMLPOT";
+    for(unsigned scale=0;scale<MIDI_SCALE_COUNT;++scale) {
+        assert(midi_scales[scale].selector==selectors[scale]);
+        assert(midi_music_scale_selector(selectors[scale]-'A'+4)==(int)scale);
+        for(unsigned root=0;root<12;++root) for(unsigned note=0;note<128;++note) {
+            bool expected=false;
+            for(unsigned i=0;i<counts[scale];++i) expected|=(note+12-root)%12==intervals[scale][i];
+            assert(midi_music_contains(&(midi_music_config_t){root,scale},note)==expected);
+        }
+    }
+    assert(!midi_music_contains(NULL,60));
+    assert(!midi_music_contains(&(midi_music_config_t){12,0},60));
+    assert(!midi_music_contains(&(midi_music_config_t){0,MIDI_SCALE_COUNT},60));
+    assert(!midi_music_contains(&(midi_music_config_t){0,0},128));
+    for(unsigned i=0;i<MIDI_ROOT_KEY_COUNT;++i) assert(midi_music_root_selector(midi_root_keys[i].usage)==(int)(i%12));
+    assert(midi_music_root_selector(0x29)==-1 && midi_music_scale_selector(0x04)==-1);
+}
+
+static void open_music(unsigned page)
+{
+    unsigned at=page==MENU_KEY?menu.e:menu.s;
+    values[menu.fn]=values[at]=2400; step();
+    assert(menu.pending==page && !menu.music_page);
+    values[menu.fn]=values[at]=3900; step();
+    assert(menu.music_page==page && !menu.choice_ready);
+    step(); step(); drain(); logged=0;
+    assert(menu.choice_ready && !raw.armed);
+}
+
+static void select_music(unsigned usage, unsigned page, unsigned result)
+{
+    const unsigned at=sensor(usage,0);
+    const midi_music_config_t old=midi.music;
+    open_music(page);
+    values[at]=2400; step();
+    assert(menu.music_page==page && menu.choice_sensor==at && menu.selection==result);
+    const char *word=page==MENU_KEY?midi_root_names[result]:midi_scales[result].name;
+    for(unsigned t=0;t<menu.text.length*200u+500u;t+=200)
+        text_frame(&menu.text,word,t<menu.text.length*200u?(int)(t/200u):-1,menu.text.started_at+t);
+    for(unsigned i=0;i<8;++i) step();
+    assert(!memcmp(&old,&midi.music,sizeof(old)) && !logged);
+    values[at]=raw.release[at]; step(); assert(menu.music_page==page);
+    values[at]++; step(); assert(!menu.music_page);
+    assert(page==MENU_KEY?midi.music.root==result:midi.music.scale==result);
+    values[at]=3900; step(); drain(); logged=0;
+}
+
+static void music_menus(void)
+{
+    const uint8_t root_usage[]={0x2b,0x1e,0x14,0x1f,0x1a,0x08,0x21,0x15,0x22,0x17,0x23,0x1c};
+    for(unsigned profile=1;profile<=3;++profile) {
+        init(); raw.profile=profile; raw.count=profile==3?65:60+profile;
+        keyboard_raw_invalidate(&raw); step(); drain(); toggle();
+        uint8_t saved[65]; memcpy(saved,midi.mapping,sizeof(saved));
+        assert(!midi.music.root && midi.music.scale==MIDI_SCALE_CHROMATIC);
+        for(unsigned scale=0;scale<MIDI_SCALE_COUNT;++scale)
+            select_music(midi_scales[scale].selector-'A'+4,MENU_SCALE,scale);
+        for(unsigned root=0;root<12;++root) select_music(root_usage[root],MENU_KEY,root);
+        assert(!memcmp(saved,midi.mapping,sizeof(saved)));
+        /* Escape cancels even while a choice is being previewed. */
+        open_music(MENU_SCALE); values[sensor('J'-'A'+4,0)]=2400; step();
+        values[sensor(0x29,0)]=2400; step();
+        assert(!menu.music_page && midi.music.scale==MIDI_SCALE_CHROMATIC);
+        for(unsigned i=0;i<raw.count;++i) values[i]=3900;
+        step(); drain();
+        /* Two simultaneous selectors are rejected until everything is up. */
+        open_music(MENU_SCALE);
+        unsigned j=sensor('J'-'A'+4,0),i=sensor('I'-'A'+4,0);
+        values[j]=values[i]=2400; step(); assert(!menu.choice_ready && menu.choice_sensor==255);
+        values[j]=3900; step(); assert(!menu.choice_ready);
+        values[i]=3900; step(); step(); assert(menu.choice_ready);
+        keyboard_menu_cancel(&menu); step(); drain();
+        for(unsigned fault=0;fault<5;++fault) {
+            open_music(MENU_KEY); values[sensor(0x2b,0)]=2400; step();
+            if(fault==0) keyboard_raw_enable(&raw,false);
+            if(fault==1) ++raw.revision;
+            if(fault==2) {
+                keyboard_config_t before=raw.engine.config;
+                keyboard_menu_frame(&menu,&raw,lower,upper,&before,frames/8,true,midi.lower_muted,&midi.music);
+            }
+            if(fault==3) keyboard_menu_cancel(&menu);
+            if(fault==4) values[0]=0;
+            step(); assert(!menu.music_page && midi.music.root==11);
+            for(unsigned k=0;k<raw.count;++k) values[k]=3900;
+            keyboard_raw_enable(&raw,true); step(); drain();
+        }
+        assert(keyboard_midi_select_music(&midi,&raw,2,MIDI_SCALE_DORIAN)); step(); drain();
+        toggle(); assert(midi.music.root==2 && midi.music.scale==MIDI_SCALE_DORIAN);
+        press_fit(menu.e); assert(keyboard_report_get_usage(&raw.engine.report,0x08));
+        values[menu.e]=3900; step(); toggle();
+        assert(midi.music.root==2 && midi.music.scale==MIDI_SCALE_DORIAN);
+        keyboard_midi_init(&midi); assert(!midi.music.root && midi.music.scale==MIDI_SCALE_CHROMATIC);
+    }
+    puts("PASS root/scale menus: all roots/scales/layouts, exact choice words, held/release semantics, cancellation, chord rejection, mappings and persistence");
+}
+
+static void music_output(void)
+{
+    init(); toggle();
+    for(unsigned root=0;root<12;++root) for(unsigned scale=0;scale<MIDI_SCALE_COUNT;++scale) {
+        assert(keyboard_midi_select_music(&midi,&raw,root,scale)); step(); drain(); logged=0;
+        bool expected[128]={false};
+        for(unsigned i=0;i<raw.count;++i) if(midi.mapping[i]!=255) {
+            values[i]=2400;
+            if(midi_music_contains(&midi.music,midi.mapping[i])) expected[midi.mapping[i]]=true;
+        }
+        step();
+        for(unsigned frame=0;frame<5;++frame) {
+            for(unsigned i=0;i<raw.count;++i) if(midi.mapping[i]!=255) values[i]-=100;
+            step();
+        }
+        drain();
+        for(unsigned note=0;note<128;++note) assert(events(0x90,note)==expected[note]);
+        uint8_t rgb[LIGHTING_FRAME_SIZE]; memset(rgb,255,sizeof(rgb));
+        keyboard_midi_lights(&midi,rgb,0);
+        for(unsigned i=0;i<raw.count;++i) if(midi.role[i]==0) {
+            const lighting_channels_t *c=&g_lighting_channels[0][i];
+            unsigned v=midi.mapping[i]!=255 && expected[midi.mapping[i]]?255:0;
+            assert(rgb[c->red]==v && rgb[c->green]==v && rgb[c->blue]==v);
+        }
+        for(unsigned i=0;i<raw.count;++i) values[i]=3900;
+        step(); drain();
+        for(unsigned note=0;note<128;++note) assert(events(0x80,note)==expected[note]);
+    }
+    /* GUI assignments are filtered by pitch, not physical key legend. */
+    assert(keyboard_midi_map(&midi,&raw,menu.c,73)); step(); drain();
+    assert(keyboard_midi_select_music(&midi,&raw,0,MIDI_SCALE_MAJOR)); step(); drain(); logged=0;
+    press_fit(menu.c); drain(); assert(!events(0x90,73));
+    values[menu.c]=3900; step();
+    assert(keyboard_midi_select_music(&midi,&raw,1,MIDI_SCALE_MAJOR)); step(); drain(); logged=0;
+    press_fit(menu.c); drain(); assert(events(0x90,73)==1);
+    blocked=true;
+    assert(keyboard_midi_select_music(&midi,&raw,0,MIDI_SCALE_MAJOR));
+    assert(midi.panic && !raw.armed && !midi.refs[73]);
+    assert(!keyboard_midi_select_music(&midi,&raw,12,0));
+    assert(!keyboard_midi_select_music(&midi,&raw,0,MIDI_SCALE_COUNT));
+    blocked=false; values[menu.c]=3900; step(); drain(); logged=0;
+    assert(keyboard_midi_select_music(&midi,&raw,0,MIDI_SCALE_MAJOR)); step(); drain();
+    keyboard_midi_toggle_lower(&midi,&raw); step(); drain(); logged=0;
+    press_fit(sensor(0x10,0)); drain(); assert(!events(0x90,72)); /* M is in scale but muted */
+    values[sensor(0x10,0)]=3900; step(); press_fit(sensor(0x2b,0)); drain(); assert(events(0x90,72)==1);
+    puts("PASS all 120 root/scale filters: polyphonic USB events and LED masks agree; remapping, lower-row intersection and cleanup");
+}
+
+static void sustain_pedal(void)
+{
+    for(unsigned profile=1;profile<=3;++profile) {
+        init(); raw.profile=profile; raw.count=profile==3?65:60+profile;
+        keyboard_raw_invalidate(&raw); step(); drain();
+        const unsigned space=sensor(0x2c,0),tab=sensor(0x2b,0);
+        press_fit(space); drain(); assert(keyboard_report_get_usage(&raw.engine.report,0x2c) && !midi.sustain);
+        values[space]=3900; step(); toggle();
+        assert(midi.mapping[space]==255 && !keyboard_midi_map(&midi,&raw,space,60));
+        assert(keyboard_midi_select_music(&midi,&raw,1,MIDI_SCALE_MAJOR)); step(); drain();
+        keyboard_midi_toggle_lower(&midi,&raw); step(); drain(); logged=0;
+        values[space]=3500; step(); drain(); assert(!logged && !midi.sustain);
+        values[space]=3499; step(); drain(); assert(midi.sustain && events(0xb0,64)==1);
+        assert(log_events[0][3]==127);
+        for(unsigned j=0;j<20;++j) {values[space]=j%2?3500:3600; step(); drain();}
+        assert(events(0xb0,64)==1);
+        values[space]=3601; step(); drain(); assert(!midi.sustain && events(0xb0,64)==2);
+        assert(log_events[logged-1][3]==0);
+        uint8_t rgb[LIGHTING_FRAME_SIZE]={0}; keyboard_midi_lights(&midi,rgb,0);
+        const lighting_channels_t *c=&g_lighting_channels[profile-1][space];
+        unsigned offset=c->controller*192u;
+        assert(rgb[offset+c->red]==0 && rgb[offset+c->green]==0 && rgb[offset+c->blue]==255);
+        assert(keyboard_midi_select_music(&midi,&raw,0,MIDI_SCALE_CHROMATIC)); step(); drain();
+        press_fit(tab); drain(); logged=0;
+        /* Same-scan pedal down is delivered before the note release. */
+        values[space]=2400; values[tab]=3900; step(); drain();
+        assert(logged>=2 && log_events[0][1]==0xb0 && log_events[0][2]==64 && log_events[0][3]==127);
+        assert(log_events[1][1]==0x80 && log_events[1][2]==72);
+        values[space]=3900; step(); drain(); logged=0;
+        blocked=true;
+        for(unsigned j=0;j<8;++j) {values[space]=j%2?3900:2400; step(); drain();}
+        assert(!logged && midi.count==8);
+        blocked=false; drain(); assert(logged==8);
+        for(unsigned j=0;j<8;++j) assert(log_events[j][1]==0xb0 && log_events[j][2]==64 && log_events[j][3]==(j%2?0:127));
+        values[space]=2400; step(); drain(); logged=0;
+        keyboard_raw_invalidate(&raw); keyboard_midi_guard(&midi,&raw);
+        blocked=true; drain(); assert(midi.panic==MIDI_CLEANUP_EVENTS && !midi.sustain);
+        blocked=false; drain(); assert(log_events[0][1]==0xb0 && log_events[0][2]==64 && !log_events[0][3]);
+        /* A press swallowed during cleanup must not turn sustain on afterward. */
+        values[space]=3900; step(); keyboard_midi_abort(&midi);
+        values[space]=2400; step(); drain(); logged=0;
+        step(); drain(); assert(!midi.sustain && !events(0xb0,64));
+        values[space]=3900; step(); values[space]=2400; step(); drain();
+        assert(midi.sustain && events(0xb0,64)==1);
+        /* Fn cancels the pedal and cannot reassert it while Space stays held. */
+        values[menu.fn]=2400; step(); drain(); assert(!midi.sustain);
+        values[menu.fn]=3900; step(); drain(); assert(!midi.sustain);
+        values[space]=3900; step(); logged=0; blocked=true;
+        for(unsigned j=0;j<140 && !midi.errors;++j) {values[space]=j%2?3900:2400; step();}
+        assert(midi.errors==1 && midi.panic && !midi.sustain && !raw.armed);
+        blocked=false; drain();
+    }
+    puts("PASS sustain: all layouts, reserved Space/blue hint, Schmitt boundaries, ordered CC64/note release, backpressure edges, fault/overflow pedal-off, keyboard Space unaffected");
+}
+
 int main(void)
 {
     default_mapping(); velocity_pressure_and_modes(); short_taps_and_overlap();
     octave_and_duplicates(); faults_and_backpressure(); polyphony(); shift_and_filtered_strike(); octave_lights();
+    text_display(); inverse_lighting(); menu_input_isolation(); wheels(); lower_rows(); music_data(); music_menus(); music_output(); sustain_pedal();
     printf("MIDI tests passed; controller state %zu bytes\n",sizeof(keyboard_midi_t));
     return 0;
 }

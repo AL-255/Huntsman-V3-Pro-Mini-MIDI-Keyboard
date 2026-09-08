@@ -1,7 +1,7 @@
 # MIDI mapping, velocity pop filter and octave indication
 
-The filter, revised map and octave indicators are included in the installed
-`keyboard-calibration-parallel` application.
+The filter, revised map and octave indicators are included in the complete
+`keyboard-fn-menu` application.
 No device access or reset is needed for the offline checks here.
 
 ## Mapping
@@ -15,7 +15,9 @@ the maximum travel of the held keys mapped to that note.
 
 Left Shift is identified from its recovered modifier action, not as a printable
 HID usage. It remains Shift in keyboard mode and becomes a configurable C4 note
-in MIDI mode. Fn, Left Ctrl and Left Alt remain the mode/octave controls.
+in MIDI mode. Fn is a menu control; Right Alt/Ctrl shift octave, Left Ctrl/Alt
+bend pitch down/up, and Left Windows supplies modulation. These controls
+cannot be remapped to notes; wheel values do not use the velocity filter.
 The GUI displays sharp note names and still accepts flat spellings as input.
 It reads mapping state from the device. Importing a host profile replaces
 defaults with that file's stored mappings.
@@ -82,13 +84,16 @@ filtering. Telemetry uses HKG6.
 
 ## Octave LEDs
 
-Only the control matching the shift direction blinks: Left Ctrl for negative,
-Left Alt for positive. It alternates amber and off with equal duty cycle. The
+Only the control matching the shift direction blinks: Right Alt for negative,
+Right Ctrl for positive. It alternates blue (PWM 0,0,255 before global brightness)
+and off with equal duty cycle. The
 full period is `120 * (11 - abs(octave))` ms, for offsets limited to ±10. Thus
 each additional octave strictly increases blink speed. At zero, neither has
-an octave overlay; in keyboard mode the stored offset does not flash either key.
-The persistent Enter mode marker remains and active mode-change pulses take
-priority. Existing lighting-off, invalid-scan and stale-frame blanking apply.
+an octave overlay and all five octave/wheel controls remain steady blue;
+in keyboard mode the stored offset does not flash either key and all five use
+inverse-travel lighting.
+The persistent Enter mode marker remains; the held Fn+Enter mode-name display
+takes priority. Existing lighting-off, invalid-scan and stale-frame blanking apply.
 All channels come from the recovered per-profile LED map.
 
 ## Build and verification
@@ -97,10 +102,10 @@ All channels come from the recovered per-profile LED map.
 cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
 # Requires the separate read-only production reference and audit dependencies:
-cmake --build --preset keyboard-calibration-parallel --target audit-keyboard
+cmake --build --preset keyboard-fn-menu --target audit-keyboard
 ```
 
 Tests cover all 43 defaults, Left Shift's two roles, an actual USB-MIDI Note On
@@ -108,6 +113,7 @@ with filtered attack velocity, high/low interval outliers at every position,
 deterministic ties, fractional means and normalization limits. Full-history
 randomized tests retain 16640 per-key scan frames and validate concurrent and
 overlapping window completion. Octave LED tests cover both signs and all ten
-magnitudes across ANSI, ISO and JIS, both phases, zero/keyboard mode and pulse
-priority. Hardware visibility and filtered playing response are player checks,
-not conclusions from these models. No new flash is needed to try the installed build.
+magnitudes across ANSI, ISO and JIS, both phases and zero/keyboard mode. Text
+tests cover mode-name priority and release cancellation. Hardware visibility
+and filtered playing response are player checks,
+not conclusions from these models. See [hardware validation limits](CALIBRATION.md#validation-status).

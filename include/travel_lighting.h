@@ -10,9 +10,10 @@ extern const lighting_channels_t g_lighting_channels[3][65];
 extern const lighting_op_t g_lighting_primary[], g_lighting_secondary[], g_lighting_maintenance[];
 extern const unsigned g_lighting_primary_count, g_lighting_secondary_count, g_lighting_maintenance_count;
 
-/* White PWM, linear in the production endpoint-normalized optical range.
+/* Press-increasing normalized travel (also used for MIDI aftertouch).
  * Does not use binary key state, actuation thresholds, gamma or a deadband. */
 uint8_t lighting_travel_pwm(uint16_t raw, uint16_t lower, uint16_t upper);
+/* White inverse travel: released=255, bottomed=0, invalid=0. */
 void lighting_travel_frame(uint8_t profile, const uint16_t *raw, const uint16_t *lower,
                           const uint16_t *upper, bool valid, uint8_t *frame);
 

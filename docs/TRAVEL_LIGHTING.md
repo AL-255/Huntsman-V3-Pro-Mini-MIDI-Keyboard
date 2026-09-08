@@ -1,6 +1,6 @@
 # Production-derived per-key travel lighting
 
-Travel lighting is included in the installed `keyboard-calibration-parallel`
+Travel lighting is included in the `keyboard-fn-menu`
 application. The recovered controller/mapping details below remain applicable;
 see [current validation](CALIBRATION.md#validation-status).
 User calibration supplies independently saved per-key endpoints, but
@@ -15,16 +15,19 @@ ASIC layout discovery succeeds. It does not require CDC to be opened or a
 after neutral arming; the original lighting-only preset required `keys on`.
 Diagnostic/USB-only presets retain their own startup policy.
 
-Each key is white with 8-bit PWM proportional to its endpoint-normalized raw
-reading. It does not use pressed/released state, the FN editor, actuation
+Each key is white with inverse endpoint-normalized travel: fully lit at rest,
+dimming toward black as it is pressed. It does not use binary pressed/released state, the FN editor, actuation
 threshold, rapid-trigger hysteresis, gamma correction, or the keyboard engine's
 low-level deadband. MIDI mode/shift and calibration indicators overlay the
-base white effect as described in [MIDI design](MIDI_DESIGN.md) and
+base white effect. MIDI mode masks keys whose configured note is unmapped;
+the mask follows GUI mapping changes on the next lighting frame. Mode/shift
+indicators remain exceptions as described in [MIDI design](MIDI_DESIGN.md) and
 [calibration](CALIBRATION.md):
 
 ```text
-PWM = round(255 * (upper - raw) / (upper - lower)), clamped to 0..255
-raw >= upper: off; raw <= lower: maximum white
+travel = round(255 * (upper - raw) / (upper - lower)), clamped to 0..255
+PWM = 255 - travel
+raw >= upper: maximum white; raw <= lower: off
 ```
 
 Invalid input, unsettled scanning, stopped/faulted scanning, USB unconfigured,
@@ -34,13 +37,21 @@ started at most every 40 ms, corresponding to production's alternating
 there is no queued-frame FIFO. The primary and secondary controller
 uploads use the same frozen snapshot.
 
+Invalid per-key raw values or endpoints remain dark, not inverted to full
+brightness. `lighting_travel_pwm` retains its press-increasing normalization
+for MIDI aftertouch; only the LED frame inverts it. Keyboard mode lights all
+keys independently of their MIDI mappings. Enter's mode marker and active
+octave-shift blink remain explicit overlays. The five octave/wheel controls and Space sustain
+use Enter's full-intensity blue in MIDI mode, with the same global brightness
+scaling as ordinary keys; the active right-side octave indicator
+blinks blue/off. Other unmapped MIDI keys stay dark.
+
 **This is linear in production-normalized optical travel, not a validated
 linear millimeter measurement or perceived-brightness curve.** The existing
 scanner attempts the original ASIC endpoint calibration. If rejected, it keeps
 production defaults 2240/3360 from `0x20016464`. Using defaults may leave
 dark/saturated portions of the physical stroke. Saved user calibration overrides these endpoints
-after startup settling. One complete physical 61-key calibration and flash
-readback succeeded; see [the validation record](CALIBRATION.md#validation-status).
+after startup settling; see [validation limits](CALIBRATION.md#validation-status).
 
 Production additionally reads CRC-checked persistent calibration blocks
 (`0x2001ad30`: flash offsets `0x49000`, `0x49600`, `0x49c00`) and applies
@@ -95,6 +106,33 @@ Steady updates write 192 primary bytes at `00`; JIS additionally writes twelve
 bytes at secondary `04`, then `13=00`. No speculative registers are used.
 The pins' electrical roles are not inferred beyond this recovered sequence.
 
+## Fn menu and brightness
+
+The [Fn menu](FN_MENU.md) replaces the travel frame with supported-key hints.
+In MIDI mode Fn+Left Shift adds a white hint for the lower-row mute toggle. Muted
+Caps/Shift-row note keys are dark independent of their mappings; Enter's blue
+mode marker and bottom-row control hints remain visible. Text previews use
+the same white 30%/100% `LOWER-OFF` / `LOWER-ON` renderer.
+Fn+E/S add white root/scale menu hints. Normal note lighting shares the MIDI
+eligibility predicate: disabled rows, nonmembers of the selected root/scale,
+unmapped and out-of-range transposed notes are dark. Root/scale menus instead
+show available selectors dim white, the current value green and Escape red;
+held choices preview their names. Mode/control markers remain independent.
+Keyboard function/navigation shortcuts are green; settings are white except
+Enter's target-mode color. The trigger editor draws number-row feedback;
+calibration keeps its independent progress colors. Fn settings preview names
+while held and act on release; green keyboard shortcuts send held NKRO keys.
+RESET instead opens a persistent `RESET?` confirmation with Y solid green and
+N solid red at full brightness; the question mark animates on the /? key.
+Outside calibration/editor feedback, Fn+K/L scales all channels
+using the original 20-step brightness table. Fn hints remain visible between
+repeated K/L taps with Fn held, with a minimum intensity so brightness can be
+restored from zero. Held shortcut text
+overrides travel/menu markers at absolute 30%/100% PWM, ending and executing on either
+key's release without blocking the scheduler. Mode names share Enter's target
+color (blue MIDI, green keyboard); other names are white. The final upload still obeys
+lighting-off, validity, stale-frame and pending-buffer rules.
+
 ## SDK and failure handling
 
 The build uses the existing official MCUXpresso Installer-selected NXP source
@@ -120,15 +158,15 @@ may remain visible: blacking them cannot be guaranteed over a failed bus.
 ```sh
 cmake --preset host-tests
 cmake --build --preset host-tests
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
 cmake --build --preset host-tests --target audit-lighting
-cmake --build --preset keyboard-calibration-parallel --target audit-lighting
+cmake --build --preset keyboard-fn-menu --target audit-lighting
 ```
 
 The audit targets require the Python dependencies in `tools/requirements-audit.txt`.
 They neither open nor flash a device. Current output is in
-`build-keyboard-calibration-parallel`; the binary is 131072 bytes.
+`build-keyboard-fn-menu`; the binary is 131072 bytes.
 
 Runtime diagnostics are:
 
@@ -152,7 +190,7 @@ As before, text replies are suppressed while the binary stream owns CDC.
 
 - 262,144 raw uint16/PWM comparisons: monotonic linear rounding, saturation,
   endpoints and invalid values. No hidden binary key threshold.
-- 188 single-sensor isolations and 36 mixed frames: the application's entire
+- 188 single-sensor dark isolations and 36 mixed frames: the application's entire
   204-byte LED output equals the executed production ARM renderer for all
   three layouts, including patched FN/right-Alt and JIS secondary channels.
 - Actual compiled SDK I2C interrupt transfers compared byte-for-byte with
@@ -164,8 +202,10 @@ As before, text replies are suppressed while the binary stream owns CDC.
   the next upload uses the newest frame.
 - NACK and stalled-transfer injection: one latched fault, no retry/GPIO cycle,
   continued optical scans and responsive CDC, no reset intent.
-- Full USB startup/PHY/alignment/updater, NKRO/editor and raw-stream regressions
-  pass on the lighting ELF. Existing native keyboard/reference audits also run.
+- Compiled MIDI checks verify the default note-lighting mask, live remapping,
+  unchanged attack velocity/aftertouch and octave-control overlays.
+- USB startup/PHY/alignment/updater checks pass. Additional NKRO/editor and
+  raw-stream regression targets are listed in [building](BUILDING.md).
 
 The tests above are software/register-model results, not measurements of
 electrical timing, keycap illumination, physical travel, power draw or

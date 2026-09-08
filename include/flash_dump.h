@@ -9,4 +9,5 @@
 void flash_dump_record(uint32_t id, uint32_t address, uint8_t out[FLASH_DUMP_SIZE]);
 uint32_t flash_calibration_read(unsigned slot, uint8_t *page);
 uint32_t flash_calibration_write(unsigned slot, const uint8_t *page);
+uint32_t flash_calibration_erase(unsigned slot);
 #endif

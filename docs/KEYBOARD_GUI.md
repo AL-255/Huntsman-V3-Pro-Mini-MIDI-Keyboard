@@ -1,6 +1,6 @@
 # Standalone keyboard and configuration GUI
 
-Current firmware is `keyboard-calibration-parallel` with HKG6 telemetry:
+Current firmware is `keyboard-fn-menu` with HKG6 telemetry:
 standalone Schmitt keyboard, MIDI, normalized per-key velocity and parallel
 calibration. The GUI supports older HKG1–5 devices with version-gated controls.
 See [current validation](CALIBRATION.md#validation-status).
@@ -12,12 +12,12 @@ calibration saves endpoints to the two authorized tail pages.
 From the repository root, using the existing pinned NXP SDK/toolchain setup:
 
 ```sh
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
 python3 tools/keyboard_gui.py --device /dev/ttyACM0
 ```
 
-Current application: `build-keyboard-calibration-parallel/huntsman_firmware.bin`, exactly 131072 bytes,
+Current application: `build-keyboard-fn-menu/huntsman_firmware.bin`, exactly 131072 bytes,
 linked at `0x20000000`. Original bootloader/update transport is unchanged.
 
 The Linux GUI uses Python's standard library and Tk (`python3-tk` must be
@@ -48,11 +48,14 @@ never silently retries a timed-out/rejected command.
   not control keyboard scanning or HID processing.
 - Up -> down when `raw < press`; down -> up when `raw > release`.
   Equality and the interval between thresholds retain the previous state.
-- Default for every sensor: **press 3600, release 3700**.
+- Default for every sensor: **press 3500, release 3600**.
 - Allowed configuration: `1 <= press < release <= 4095`. Readbacks themselves
   may reach 4096. A release threshold of 4096 could never be exceeded.
 - Down/up transitions use the recovered physical-key/action maps and existing
   16-byte NKRO keyboard report, including modifiers and keyboard FN actions.
+  Right Alt/Menu/Right Ctrl/Right Shift send Left/Down/Right/Up; captions retain
+  physical names. See [Fn keyboard shortcuts](FN_MENU.md#keyboard-shortcuts)
+  for the green-hinted function and navigation layer. MIDI mappings are separate.
   Multiple keys can remain down together. Host key repeat is controlled by
   the operating system, not additional firmware down edges.
 - Scanning starts automatically after USB configuration. Keyboard reporting
@@ -67,16 +70,30 @@ never silently retries a timed-out/rejected command.
   keyboard. Busy HID transfers retry the current report on subsequent service
   calls; this is not a lossless transition-recording protocol.
 
-The existing FN+Tab/FN+Caps modal editors remain available, with their original
-entry/exit/event-consumption behavior. Escape exits; releasing FN alone does
-not exit. These normalized settings **do not change the per-key raw
-Schmitt pairs**. The GUI reports this mode explicitly. There is no invented
-conversion between the production's calibrated rapid-trigger settings and raw
-ADC counts. Consumer/media/profile actions outside the existing keyboard HID
-report implementation remain unsupported.
+The FN+Tab/FN+Caps modal editors use the shared hold-preview/release-entry menu,
+then retain the original editor event behavior. Escape exits; releasing FN alone does
+not exit. A dirty **actuation** commit now converts the original normalized
+press/release thresholds through each sensor's calibration into the raw
+Schmitt pairs shown in the GUI. This replaces per-key custom pairs, takes effect
+atomically and requires neutral before reporting resumes. Rapid-trigger editor
+compatibility does not enable rapid-trigger behavior in the raw Schmitt engine.
+The GUI reports editor mode; ordinary edits are rejected while editing, while
+Disable keyboard cancels the pending edit. See [Fn menu](FN_MENU.md).
+Consumer/media/profile actions outside the keyboard HID remain unsupported.
 
-Fn+Enter toggles keyboard/MIDI mode. MIDI mapping controls use note names or
-numbers; Fn and left Ctrl/Alt are reserved controls. Per-key velocity is a
+Fn+Enter previews the target mode and toggles on release. Fn+R previews RESET,
+then opens RESET? on release. Release all keys, then press green Y to clear
+saved calibration or red N to cancel. Confirmed clearing restores application
+defaults once all keys are neutral. The GUI observes calibration generation 0
+afterward; simply opening or cancelling confirmation does not change storage.
+MIDI mapping controls use note names or
+numbers; Fn, Left Ctrl/Windows/Alt, Right Alt/Ctrl and Space are reserved controls.
+The GUI labels Right Alt/Ctrl octave −/+, Left Ctrl/Alt bend −/+ and Left
+Windows modulation, and Space sustain. Space uses its editable Schmitt pair
+to send CC64 127/0. Wheels use fixed 3800…1000 endpoints, not GUI Schmitt
+thresholds or calibration bounds. A host profile assigning notes to a reserved
+control is rejected before applying anything; existing files are not rewritten.
+Per-key velocity is a
 firmware-calculated 0–1 float, with an [interval pop filter](MIDI_FILTER.md).
 **Apply thresholds to all keys** sends one atomic MCU update. The nominal
 8 kHz velocity assumption is not a measured acquisition rate.
@@ -97,6 +114,15 @@ on the computer. Nothing writes bootloader, factory calibration, ASIC firmware
 or unreviewed flash storage. MIDI mappings are likewise RAM-only. Calibration
 endpoints alone persist on-device in the two documented unused tail pages.
 Host JSON profiles do not contain calibration, performance mode or octave.
+They also do not contain Fn+Left Shift's MIDI lower-row mute. This setting is RAM-only,
+survives mode switches and leaves the displayed mappings intact. A Caps/Shift
+row key can show an assigned note in the GUI yet be muted by Fn+Left Shift; hold the
+combo to preview `LOWER-ON`, then release to restore it. `menu status` reports
+the flag over text CDC; the HKG6 GUI format is unchanged.
+Fn+E/Fn+S also select RAM-only MIDI root/scale filters. These are not GUI
+mapping edits or JSON fields. Assigned notes can be silent/dark because of
+the current filter; the GUI still shows their assignments and raw down state.
+Use `menu status` for root/scale names, or T in the Fn+S menu for chromatic.
 
 Load validates the entire ANSI profile before sending anything, disables
 keyboard output, applies all 61 pairs and any version-2 MIDI mappings with individual readback, then restores
@@ -140,7 +166,7 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 python3 -B tools/test_keyboard_gui_tk.py
-cmake --build --preset keyboard-calibration-parallel --target audit-lighting audit-calibration
+cmake --build --preset keyboard-fn-menu --target audit-lighting audit-calibration
 ```
 
 The last command includes USB, keyboard, stream and lighting ARM execution

@@ -45,7 +45,7 @@ def main():
         app.canvas.event_generate('<Motion>',x=int((x1+x2)/2),y=int((y1+y2)/2))
         app.canvas.event_generate('<Button-1>',x=int((x1+x2)/2),y=int((y1+y2)/2))
         root.update()
-        assert app.selected == key.sensor and app.press.get() == '3600'
+        assert app.selected == key.sensor and app.press.get() == '3500'
         app.select(32); root.update()
         if args.screenshot:
             from PIL import ImageGrab
@@ -91,9 +91,10 @@ def main():
             app.midi_note.set('C4'); app.midi_button.invoke()
             pump_until(lambda:app.snapshot.midi_mapping[32] == 60)
             assert 'C4 (60)' in app.details.get()
-            app.select(next(k.sensor for k in app.keys if k.label == 'Fn'))
-            root.update(); pump_until(lambda:str(app.midi_button['state']) == 'disabled')
-            assert str(app.midi_button['state']) == 'disabled'
+            for label in ('Fn','Spc'):
+                app.select(next(k.sensor for k in app.keys if k.label == label))
+                root.update(); pump_until(lambda:str(app.midi_button['state']) == 'disabled')
+                assert str(app.midi_button['state']) == 'disabled'
             app.disable_button.invoke()
             pump_until(lambda:not app.snapshot.flags & 1)
             app.toggle_connection()

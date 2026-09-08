@@ -1,7 +1,6 @@
 # Keyboard and MIDI performance design
 
-Current application: `keyboard-calibration-parallel`, installed and read back
-on hardware. See
+Current application: `keyboard-fn-menu`, built, tested and flashed. See
 [current validation](CALIBRATION.md#validation-status) and
 [filter design](MIDI_FILTER.md).
 This is application behavior, not a claim that the stock firmware implements
@@ -15,20 +14,24 @@ Calibration uses a separately bounded two-page flash writer.
 velocity registration. `keyboard_midi.c` owns performance mode, MIDI mapping,
 octave, pending strikes, note ownership and MIDI transmission scheduling.
 `keyboard_live.c` joins these to the existing optical, USB and lighting services.
+`keyboard_menu.c` owns all held-shortcut previews and dispatches actions on release.
+Brightness K/L can be tapped repeatedly with Fn held without rearming host
+output. RESET opens a Y/N confirmation and remains output-suppressed until
+confirmed or cancelled; only a fresh Y press after neutral can clear storage.
 The USB stack continues to own a stable four-byte MIDI IN transfer buffer.
 
 ```
 valid optical frame → raw Schmitt edges and per-key velocity windows
-                   → keyboard-mode Fn+C / active calibration (output suppressed)
-                   → otherwise priority Fn+Enter mode chord
+                   → common Fn preview/release dispatcher (output suppressed during preview)
+                   → calibration / trigger / mode / brightness / RESET / root / scale / row actions
                    → keyboard: existing NKRO/Fn engine
-                   → MIDI: delayed strikes → ordered Note On/Off queue
+                   → MIDI: delayed strikes + pedal edges → ordered Note On/Off/CC64 queue
                            held-note travel → latest poly-pressure values
-main loop → queued note events first → changed pressure values → NXP USB IN
+main loop → queued note/pedal events first → latest wheels → changed pressure → NXP USB IN
 ```
 
-The MIDI state is 1516 bytes, with fixed capacities and no dynamic allocation.
-The current application uses 23816/24576 bytes SRAMX,
+The MIDI state is 1540 bytes, with fixed capacities and no dynamic allocation.
+The current application uses 24328/24576 bytes SRAMX,
 15488/16384 bytes USB SRAM, and a separate 8192-byte stack. The reserved final
 1024 application-image bytes remain unused. Calibration state uses 1324 bytes
 of writable application-image RAM, separate from velocity/MIDI state. The
@@ -36,24 +39,57 @@ firmware binary remains 128 KiB.
 
 ## Mode and key routing
 
-Power-on mode is keyboard. Each fully processed frame checks whether Fn and
-Enter are both down. The chord has priority over output dispatch, including
-when both cross their thresholds in the same scan. Either press order works.
-On a switch, the application clears HID output, cancels MIDI strikes, schedules
-note cleanup and invalidates raw arming. All keys must be above their individual
-release thresholds before arming again; a held chord cannot toggle repeatedly.
+Power-on mode is keyboard. Hold Fn, then press Enter (or press both in the same
+scan) to preview the target mode. An Enter key already held before Fn needs a
+fresh press. Preview clears HID output, cancels MIDI strikes, schedules note
+cleanup and invalidates raw arming. Releasing either member switches mode once;
+faults or configuration changes cancel without switching. All keys must be above
+their individual release thresholds before arming again.
 
-Keyboard mode uses the recovered base/Fn action maps. MIDI mode does not invoke
+Keyboard mode applies the [keyboard shortcut overrides](FN_MENU.md#keyboard-shortcuts)
+above the recovered base/Fn action maps. MIDI mode does not invoke
 that HID/configuration engine for raw edges, so performance keys do not type
 letters or activate the legacy Fn+Tab/Caps editor. The GUI uses a separate
 performance-mode field, distinct from its Fn editor-mode field.
 
-Fn, left Ctrl and left Alt are reserved MIDI controls. Left Ctrl/Alt decrement
-or increment a signed octave offset once per down edge, limited to −10…+10.
+Fn, Left Ctrl/Windows/Alt and Right Alt/Ctrl are reserved MIDI controls.
+Right Alt/Ctrl decrement or increment a signed octave offset once per down
+edge, limited to −10…+10; Fn suppresses these edges.
 Simultaneous opposite edges cancel. The offset survives mode switches but resets
 on reboot. Transposition is applied when a strike starts. A held or pending
 strike keeps its latched note even if the octave changes later. Out-of-range
 transposed notes are silent, not wrapped or clamped to another pitch.
+
+## Modulation and pitch wheels
+
+Left Windows sends channel-1 modulation, CC1 (`B0 01 value`, USB CIN 0xB).
+Left Ctrl bends down and Left Alt bends up, combined into one channel-1
+14-bit pitch bend (`E0 LSB MSB`, USB CIN 0xE). These encodings follow the
+[MIDI control-change table](https://midi.org/midi-1-0-control-change-messages)
+and [channel-message table](https://midi.org/expanded-midi-1-0-messages-list).
+
+Each input uses `depth = clamp(3800 - raw, 0, 2800)`. Modulation is
+`round(depth * 127 / 2800)`. Pitch uses signed depth `Alt - Ctrl`, summed
+before rounding: negative depth spans 8192 down to 0, positive depth spans
+8192 up to 16383. Equal inputs cancel exactly to 8192. The synthesizer owns
+the semitone range; firmware does not send an RPN bend-sensitivity setting.
+Fixed wheel endpoints are independent of calibration, velocity, and the
+configurable Schmitt thresholds. Wheels therefore react before a key-down
+threshold is reached. Values outside the endpoints saturate; invalid scans
+follow the normal output-invalidation/cleanup path.
+
+The latest wheel registers update on every valid, armed MIDI scan. Fn returns
+them to neutral. The main loop checks both once per millisecond and sends only
+changed quantized values after ordered note events, before poly pressure.
+Each pending wheel retains its latest value under USB backpressure; there is
+no wheel FIFO or catch-up replay. USB acceptance updates the sent register,
+while the SDK wrapper owns the immutable in-flight packet. Cleanup explicitly
+sends modulation zero and centered pitch even after switching back to keyboard.
+In keyboard mode, Left Ctrl/Windows/Alt remain modifiers; Right Alt/Ctrl send
+Left/Right arrows. Right Shift sends Up and Menu sends Down. These keyboard
+overrides do not change MIDI role detection or note mapping.
+
+## Note mappings
 
 Mappings are per raw sensor for the identified ANSI/ISO/JIS layout. Defaults
 are assigned using the recovered base HID action, not guessed scan order.
@@ -61,6 +97,25 @@ All unmapped keys use sentinel 255; notes are 0…127. The current default has
 43 mapped keys: Tab through backslash span C5–B6, and Left Shift through the
 apostrophe key span C4–F#5. Left Shift is a note only in MIDI mode. The GUI supports ANSI
 geometry; firmware behavior and native polyphony tests cover all three layouts.
+
+## Physical row enable mask
+
+The row gate intersects with the [root/scale filter](MIDI_SCALES.md).
+Fn+E selects the root; Fn+S selects the scale. Both are table-driven modal
+menus, with preview while a choice is held and commit on its release.
+Only enabled, in-scale, in-range notes receive normal note backlighting.
+
+Fn+Left Shift toggles a RAM-only `lower_muted` flag via the shared preview/release menu.
+The layout setup caches the Caps/Shift rows in a nine-byte sensor bitmap using
+physical IDs 0x1e..0x39, including ISO/JIS extras. Note creation and the LED
+mask share `note_enabled`; arbitrary GUI mappings cannot bypass the physical
+row gate. The Esc/Tab rows and bottom row are unaffected. Enter's explicit
+blue indicator remains visible even when its assigned note is muted.
+Toggle aborts voices/pending strikes and invalidates raw arming, as for other
+settings changes. Mapping arrays, velocity acquisition, thresholds, calibration,
+octave and wheel roles are unchanged. The flag survives mode switches and
+fault cleanup, but init/RESET clears it. It is not part of JSON or HKG6;
+read `menu status` for `lower_muted`. The GUI continues to show assignments.
 
 ## Velocity and short strikes
 
@@ -102,7 +157,8 @@ sensor. Invalid samples/config edits cancel all unfinished strikes.
 The message is **Polyphonic Key Pressure**, status `0xA0` on channel 1, not
 channel pressure (`0xD0`). Every sounding pitch has its own pressure value.
 Pressure increases with normalized optical travel, using the same lower/upper
-endpoints and clamping as white travel lighting, then converting to 0…127.
+endpoints and clamping as the travel normalization, then converting to 0…127.
+Aftertouch increases with pressure; the inverse LED brightness does not change it.
 This is a travel proxy, not an additional pressure sensor or calibrated force.
 Saved user calibration overrides the recovered/fallback endpoints after scan
 settling. See [calibration limits](CALIBRATION.md#measurement-choices).
@@ -120,9 +176,29 @@ same pitch does not send a second Note On or steal the first key's velocity.
 This prevents an early release from silencing another held key. Different
 pitches remain independent; this is not MPE and does not allocate channels.
 
+## Sustain pedal
+
+Space is a reserved MIDI control selected by its base HID usage, across all
+supported layouts. The raw engine's per-key Schmitt state drives channel-1
+CC64: 127 for press, 0 for release. There is no velocity-fit delay or
+half-pedal scaling. Root/scale and lower-row filters do not gate this control.
+It uses the same steady blue overlay and brightness scaling as Enter.
+
+The controller stores one boolean pedal state. Each edge enters the ordered
+event queue shared with notes; unlike analog wheels, pedal transitions cannot
+be coalesced. Within one scan, pedal changes are queued before note changes.
+This allows a simultaneous pedal press and note release to arrive in that order.
+Queue overflow uses the same explicit fail-safe as note overflow.
+
+Fn forces pedal-off. A press during cleanup, or a pedal held through Fn, must
+be released and pressed again before it can assert sustain. Aborting clears
+the state and sends pedal-off first in the cleanup sweep. Keyboard-mode Space
+remains normal HID Space; GUI note mapping/import rejects this reserved key
+without rewriting existing host files.
+
 ## Backpressure, cleanup and faults
 
-The 128-entry, three-byte event FIFO contains only Note On/Off events. USB
+The 128-entry, three-byte event FIFO contains Note On/Off and sustain edges. USB
 acceptance removes one event; rejection/busy leaves it queued. The vendor USB
 wrapper owns the copied four-byte USB-MIDI event until completion. Pressure is
 only serviced after the ordered queue is empty.
@@ -133,8 +209,9 @@ invalidates raw arming, and enters cleanup. This is an explicit fail-safe, not
 an unlimited lossless guarantee. Do not ignore a nonzero MIDI error count.
 
 Mode changes, mapping edits, threshold/enable invalidation, scan faults/staleness
-and USB resets also clear voice state and request cleanup. Cleanup sends Note
-Off for all 128 pitches, then CC120 (All Sound Off) and CC123 (All Notes Off) on
+and USB resets also clear voice state and request cleanup. Cleanup sends
+CC64=0 first, Note Off for all 128 pitches, then CC120 (All Sound Off), CC123 (All Notes Off),
+CC1=0 and centered pitch bend on
 channel 1. It is outside the ordinary queue and retries each packet when the
 endpoint is busy. No new note events are produced until it finishes. Keys
 pressed during cleanup require a fresh release/press edge afterward.
@@ -148,16 +225,30 @@ MIDI or keyboard operation.
 
 ## LEDs and configuration persistence
 
-The existing LED framebuffer is overlaid with two 150 ms color pulses separated
-by 150 ms intervals: green for keyboard, blue for MIDI. Between indications,
-Enter is a dim persistent marker. Other keys keep white travel-proportional PWM.
-In MIDI mode with a nonzero octave offset, Left Ctrl (negative) or Left Alt
-(positive) instead blinks amber. The on and off intervals are each
+Holding Fn+Enter previews the next mode without switching: blue `MIDI` or green
+`KEYBOARD`, matching Enter's target-mode hint. All word letters use 30% PWM, with one character at 100%
+for 200 ms, followed by a 500 ms background-only pause between words. Repeated
+letters occupy separate time slots. Release of either chord key executes the
+mode change and stops the preview on the next valid scan; no letter or word must finish first. Enter otherwise remains
+a persistent full-channel-intensity marker (green for keyboard, blue for MIDI),
+matching unpressed note keys before global brightness scaling. Other keys keep
+white inverse-travel PWM: lit at rest, dimming as pressed. In MIDI mode only
+configured note keys receive this base lighting; unmapped non-control keys are dark.
+The mask follows GUI edits without changing note/velocity/aftertouch behavior.
+See [text renderer details](FN_MENU.md#interruptible-text-display).
+Left Ctrl/Windows/Alt, Right Alt/Ctrl and Space use Enter's blue (PWM 0,0,255)
+in MIDI mode, regardless of press depth. With a nonzero octave offset,
+Right Alt (negative) or Right Ctrl (positive) instead blinks blue/off.
+The on and off intervals are each
 `60 * (11 - abs(octave))` milliseconds: the full period decreases from 1200 ms
 at magnitude 1 to 120 ms at magnitude 10. The shortest half-period remains
-longer than the existing 40 ms LED update period. The other control retains
-its travel lighting. Zero shift and keyboard mode disable this octave overlay.
-The whole-keyboard mode-change pulse takes priority when active.
+longer than the existing 40 ms LED update period. The other controls stay
+steady blue. Zero shift disables blinking; keyboard mode restores all
+six keys' inverse-travel lighting. Brightness scaling still applies.
+The mode word overrides ordinary travel lighting, octave markers and Fn hints.
+The [Fn menu/editor](FN_MENU.md) otherwise overrides performance hints while active.
+Fn suppresses new MIDI strikes; already sounding notes still release normally.
+Fn+Enter and calibration entry are disabled inside a trigger editor.
 The overlay uses recovered per-profile channels, not new GPIO or controller
 initialization. Existing `light off`, invalid/stale frame blanking and transfer
 ownership still take precedence.

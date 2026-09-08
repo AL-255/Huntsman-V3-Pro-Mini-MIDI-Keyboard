@@ -1,21 +1,21 @@
 # Huntsman V3 Pro Mini MIDI Keyboard
 
+For everyday use, read the illustrated, self-contained [keyboard user manual](USER_MANUAL.md).
+
 An independent LPC5528 application for the Razer Huntsman V3 Pro Mini, using
 the official NXP MCUXpresso USB and peripheral drivers. It retains the
 existing bootloader and computer-initiated application updater.
 
-**Current installed image: `keyboard-calibration-parallel`.** It includes the
-43-note C4–B6 mapping, four-interval velocity pop filter, octave blink indicators
-and a read-only CDC flash dumper. Installed and hardware-checked on 2026-09-05;
-the application flash readback matches the build exactly. Bootloader readback
-is partial (its first 304 bytes return ECC errors); stock configuration backup
-is complete. See [private flash acquisition](docs/FLASH_DUMP.md).
-No build or test command below flashes hardware.
-The firmware supports simultaneous independent key holds during Fn+C /
-GUI calibration. Persistence remains restricted to the two verified unused
-tail pages, preserving serial-number storage. A complete user-operated 61-key
-calibration has been saved and independently retrieved as generation 1, with
-valid CRC and two matching reads. See [the documentation guide](docs/README.md).
+**Current build: `keyboard-fn-menu`.** It provides a lit Fn system menu,
+calibrated trigger-point editing, backlight brightness controls, NKRO typing,
+43-note MIDI mapping with velocity/aftertouch, parallel calibration and a
+read-only CDC flash dumper. Calibration alone persists in two reserved tail
+pages, preserving serial-number storage.
+
+This build is flashed, with full application readback matching the build and
+live CDC scans reporting no scan, lighting or MIDI errors. Saved calibration
+pages are unchanged. Physical animation appearance still needs user validation.
+Build/test commands never flash hardware. See [the documentation guide](docs/README.md).
 
 ## Use the keyboard
 
@@ -23,23 +23,90 @@ On boot, the application starts in standard NKRO keyboard mode. Optical
 scanning and travel-reactive lighting start after USB configuration; the GUI
 is not required for keyboard or MIDI operation.
 
+Normal backlighting is **on at rest and dims as a key is pressed**. Keyboard
+mode lights every key; MIDI mode lights only keys with a configured note.
+Enter's mode marker, octave-shift hints, Fn previews and calibration feedback
+remain separate indicators. MIDI velocity and aftertouch are unchanged.
+
 - Press below the per-key press threshold; release above its release threshold.
-  Defaults are **3600 / 3700**. Equality holds the current state.
-- Hold **Fn and press Enter** to toggle keyboard ↔ MIDI mode. Release all keys
-  after switching. The chord is consumed rather than sent as Enter.
-- A mode change produces two whole-keyboard color pulses: **green = keyboard,
-  blue = MIDI**. Enter retains a dim marker in that color. Other keys retain
-  their white, travel-proportional lighting.
-- In MIDI mode, **left Ctrl lowers the octave** and **left Alt raises it**.
+  Defaults are **3500 / 3600**. Equality holds the current state.
+- **Right Alt / Menu / Right Ctrl / Right Shift** send **Left / Down / Right / Up**
+  in keyboard mode, not their original modifier/Menu actions.
+- Hold **Fn**: keyboard shortcuts light **green**, settings **C, Tab, Caps, K,
+  L and R** light white, and Enter shows the target mode color. Other keys
+  go dark. In MIDI mode only the Enter/K/L/R/Left Shift/E/S settings are available.
+- **Fn+Esc** sends backtick; **Fn+1–0, -, =** send **F1–F12**;
+  **Fn+Backspace** sends **Delete**. **Fn+Y/P/N/M/H/J** send
+  **Insert / Print Screen / End / Page Down / Home / Page Up**.
+  These are ordinary held keyboard shortcuts: keep Fn held to repeat taps.
+- Hold **Fn+C** to preview `CALIBRATION`, then release to start. **Fn+Tab**
+  previews `TRIGGER` and opens the editor on release:
+  release Fn, choose **1–0** for levels 1–10, then **Escape** or **Fn+Tab** to
+  apply and exit. The selected number is green; the white number-row bar shows
+  travel. Commit updates all raw Schmitt pairs using each key's calibration,
+  with the original fixed-threshold exceptions. Release all keys to resume.
+- **Fn+K / Fn+L** lowers/raises brightness across the original 20 levels.
+  The `LIGHT-`/`LIGHT+` preview repeats while held; release changes one step.
+  Keep Fn held and tap K/L repeatedly; each release changes another step.
+  Brightness and trigger-point edits are RAM-only.
+  See [Fn menu details](docs/FN_MENU.md).
+- All Fn settings options **preview while held and execute once on release of
+  either key** (RESET opens confirmation). Except for repeated K/L taps while
+  Fn stays held, release all keys to rearm. **Fn+Enter** switches mode only on
+  release; the chord is consumed rather than sent as Enter.
+- While **Fn+Enter** remains held, the target word **MIDI** or **KEYBOARD**
+  lights blue (MIDI) or green (KEYBOARD), matching Enter's target-mode hint,
+  at 30%, highlighting each letter at 100% for 0.2 seconds in
+  sequence, with a 0.5-second pause between repeats. Releasing either key
+  immediately ends the animation and executes the action (visible on the next LED update).
+  Enter then remains green for keyboard or blue for MIDI, at the same full
+  channel intensity as unpressed note keys, scaled by global brightness.
+- **Fn+R** previews `RESET`; release opens `RESET?`, with **Y green / N red**
+  at full brightness. Release all keys, then press **Y** to clear our two
+  saved-calibration pages or **N** to cancel. Confirmation consumes these keys;
+  a pre-held Y cannot confirm, and Y+N together cancels. A confirmed reset
+  restores default thresholds, mappings, keyboard mode, octave and brightness
+  once all keys are released. Factory/serial data remains untouched. Recalibrate
+  afterward; deletion cannot be undone on-device. **Fn+Caps** previews `RAPID`
+  and enters the compatibility editor on release.
+- In MIDI mode, **Fn+Left Shift** toggles the Caps and Shift rows' notes off/on.
+  Hold to preview `LOWER-OFF` / `LOWER-ON`, then release to apply and release
+  all keys to resume. Muted notes go dark; the Esc/Tab rows and bottom-row
+  controls remain available. Enter keeps its blue mode marker, but any note
+  assigned to it is muted too. Mappings are retained. The setting survives
+  mode switches, but restart/RESET enables both groups. It is not saved in JSON.
+- **Fn+E** previews `KEY`, then opens root selection on release. Release all
+  keys, hold an upper piano-row root key to preview its name, and release to
+  apply. **Fn+S** similarly previews `SCALE` and opens scale selection:
+  **J** major, **I** natural minor, **D** Dorian, **H** Phrygian, **Y** Lydian,
+  **M** Mixolydian, **L** Locrian, **P** major pentatonic, **O** minor
+  pentatonic, **T** chromatic (12T). Choices are dim white, the current choice
+  green, and Escape red (cancel). Only in-scale, mapped, enabled, in-range
+  notes can play and light up; control/mode markers stay visible. Default is
+  C/chromatic. Root/scale survive mode switches, but not restart/RESET, and
+  are not stored in host profiles. See [the user manual](USER_MANUAL.md#choose-a-root-and-scale).
+- In MIDI mode, **Right Alt lowers the octave** and **Right Ctrl raises it**.
   These act once per press. Existing held notes keep their original pitch.
-  Left Ctrl blinks amber for a negative shift; Left Alt blinks amber for a
+  Right Alt blinks blue for a negative shift; Right Ctrl blinks blue for a
   positive shift. Larger shifts blink faster, from a 1.2-second cycle at ±1
-  to a 0.12-second cycle at ±10. Zero shift restores normal travel lighting.
+  to a 0.12-second cycle at ±10. Zero shift restores steady blue.
+- **Left Windows** is modulation (CC1). **Left Ctrl bends pitch down** and
+  **Left Alt bends pitch up**. Each wheel is linear from raw **3800 = 0%** to
+  **1000 = 100%**, clamped outside that range, independent of key thresholds
+  and calibration. Opposing pitch inputs combine; equal pressure cancels to
+  center. Your instrument determines the pitch-bend range in semitones.
+  These five controls use Enter's full-intensity blue, scaled by global brightness;
+  only the active octave indicator blinks.
+- **Space** is sustain: channel-1 **CC64 = 127** on press and **0** on release.
+  It uses Space's Schmitt thresholds (default press below 3500, release above
+  3600), not the wheel endpoints. Space is steady blue at Enter's brightness,
+  remains available with any root/scale or row filter, and cannot map to a note.
+  Fn/menu entry, mode changes and fault cleanup release sustain.
 - MIDI uses **channel 1**, Note On/Off, strike velocity and independent
   **polyphonic key pressure (aftertouch)**. Ordinary HID typing is suppressed
   in MIDI mode. Connect the keyboard's MIDI input to a software instrument
   that accepts channel 1 and polyphonic aftertouch.
-- Unmapped keys are silent in MIDI mode. Fn and the two octave controls are
+- Unmapped keys are silent in MIDI mode. Fn, octave, wheel and sustain controls are
   reserved; Enter may be mapped but still participates in the mode chord.
 
 MIDI note names in this project use **C0 = note 12; C4 = note 60**. Some music
@@ -67,14 +134,14 @@ The default mapping is:
 | O | E6 | 88 | . | E5 | 76 |
 | P | F6 | 89 | / | F5 | 77 |
 | - | F#6 | 90 | ' | F#5 | 78 |
-| [ | G6 | 91 | left Ctrl | octave − | — |
-| = | G#6 | 92 | left Alt | octave + | — |
-| ] | A6 | 93 | | | |
-| Backspace | A#6 | 94 | | | |
-| Backslash | B6 | 95 | | | |
+| [ | G6 | 91 | Right Alt | octave − | — |
+| = | G#6 | 92 | Right Ctrl | octave + | — |
+| ] | A6 | 93 | Left Ctrl | pitch bend − | — |
+| Backspace | A#6 | 94 | Left Alt | pitch bend + | — |
+| Backslash | B6 | 95 | Left Windows | modulation | CC1 |
 
 Left Shift remains a normal modifier in keyboard mode. All mappings remain
-GUI-editable except Fn and the octave controls. Loading a JSON profile
+GUI-editable except Fn and the octave/wheel controls. Loading a JSON profile
 can overwrite these defaults with that profile's saved mappings.
 
 ## Configuration GUI
@@ -94,7 +161,7 @@ octave and device-confirmed settings.
 - Set the selected key's press/release pair, then **Apply to selected key**.
 - **Apply thresholds to all keys** changes every pair atomically on the MCU.
 - Choose a note name, MIDI number 0–127, or **Off**, then **Apply MIDI mapping**.
-  The key captions display the confirmed mapping; Fn/left Ctrl/left Alt are
+  The key captions display the confirmed mapping; Fn and octave/wheel keys are
   reserved controls. Note mappings can be edited in either performance mode.
 - **Save profile…** exports confirmed thresholds and MIDI mappings to host JSON.
   **Load + apply profile…** disables output, applies and checks each setting,
@@ -139,15 +206,15 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
 ```
 
-Outputs in `build-keyboard-calibration-parallel/`: `huntsman_firmware.elf`, `.hex` and
+Outputs in `build-keyboard-fn-menu/`: `huntsman_firmware.elf`, `.hex` and
 `.bin`. The binary is exactly **131072 bytes**. The linker and post-build
 validator enforce application/config boundaries, vectors and USB descriptors.
 
-**Use `keyboard-calibration-parallel`, not `firmware`, for the complete application.**
+**Use `keyboard-fn-menu`, not `firmware`, for the complete application.**
 The `firmware` preset is intentionally USB-only.
 See [clean builds, dependencies and testing](docs/BUILDING.md).
 
@@ -168,6 +235,7 @@ Selecting a CDC display does not select keyboard/MIDI performance mode.
 
 ## Design and validation
 
+- [Fn system menu, trigger editor and brightness](docs/FN_MENU.md)
 - [MIDI state machine, encoding, timing, safety and tradeoffs](docs/MIDI_DESIGN.md)
 - [MIDI mapping and interval pop-filter behavior](docs/MIDI_FILTER.md)
 - [HKG6 telemetry, command acknowledgments and profile format](docs/MIDI_PROTOCOL.md)
@@ -197,9 +265,13 @@ Offline tests exercise C logic, Tk with a simulated CDC device, and the linked
 ARM USB/scan/lighting paths with synthetic hardware replies. They do not prove
 electrical behavior, physical LED colors, real-time throughput, DAW integration
 or complete hardware recovery. See [current validation](docs/CALIBRATION.md)
-for the installed hash, live checks and remaining verification limits.
+for the build and remaining verification limits.
 
 ## Updating and safety
+
+Use the [custom firmware flashing tool](https://github.com/AL-255/Huntsman-V3-Pro-Mini-Flasher)
+to install this application's firmware. Select the application `.bin` and leave
+secondary-firmware flashing disabled.
 
 The USB composite device exposes NKRO HID, USB-MIDI, CDC ACM and the existing
 90-byte updater HID interface (VID:PID `1532:02b0`). Use the supplied

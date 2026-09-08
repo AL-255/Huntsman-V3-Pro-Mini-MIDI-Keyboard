@@ -1,7 +1,7 @@
 # Whole-keyboard CDC scan stream
 
 HKS1 whole-keyboard streaming is available in the complete
-`keyboard-calibration-parallel` application. No periodic USB heartbeat text
+`keyboard-fn-menu` application. No periodic USB heartbeat text
 is emitted.
 
 ## Operation
@@ -105,14 +105,14 @@ USB/read chunk boundaries and skips malformed records/text. Terminal rendering
 ## Build/validation
 
 ```sh
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel --target audit-keyboard
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu --target audit-keyboard
 ```
 
 The audit uses the optional Python dependencies in `tools/requirements-audit.txt`
 and the read-only production image as described in KEYBOARD_RECOVERY.md.
-Current output is `build-keyboard-calibration-parallel/huntsman_firmware.bin`.
+Current output is `build-keyboard-fn-menu/huntsman_firmware.bin`.
 
 Offline checks execute actual ARM CDC/USB code with a synthetic source of
 8,000 full records and four records per modeled 500 µs host-service interval.

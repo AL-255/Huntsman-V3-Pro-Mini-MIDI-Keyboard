@@ -30,6 +30,9 @@ set(KEYBOARD_LOGIC_SOURCES
     src/keyboard_scan.c
     src/keyboard_raw.c
     src/keyboard_midi.c
+    src/midi_music.c
+    src/keyboard_text.c
+    src/keyboard_menu.c
     src/keyboard_calibration.c
     src/calibration_store.c
     src/optical_key.c
@@ -57,6 +60,10 @@ if(NOT HUNTSMAN_BUILD_FIRMWARE)
     target_link_libraries(keyboard_raw_tests PRIVATE huntsman_core)
     target_compile_options(keyboard_raw_tests PRIVATE -Wall -Wextra -Werror)
     add_test(NAME keyboard_raw COMMAND keyboard_raw_tests)
+    add_executable(keyboard_menu_tests tests/test_keyboard_menu.c)
+    target_link_libraries(keyboard_menu_tests PRIVATE huntsman_core)
+    target_compile_options(keyboard_menu_tests PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME keyboard_menu COMMAND keyboard_menu_tests)
     add_executable(keyboard_midi_tests tests/test_keyboard_midi.c)
     target_link_libraries(keyboard_midi_tests PRIVATE huntsman_core)
     target_compile_options(keyboard_midi_tests PRIVATE -Wall -Wextra -Werror)
@@ -147,6 +154,10 @@ if(HUNTSMAN_KEYBOARD_DIAGNOSTICS)
             DEPENDS huntsman_firmware USES_TERMINAL VERBATIM)
         add_custom_target(audit-calibration
             COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_calibration_arm.py
+                $<TARGET_FILE:huntsman_firmware> --reference ${HUNTSMAN_PRODUCTION_REFERENCE}
+            DEPENDS huntsman_firmware USES_TERMINAL VERBATIM)
+        add_custom_target(audit-menu
+            COMMAND python3 -B ${CMAKE_CURRENT_SOURCE_DIR}/tools/test_keyboard_menu_arm.py
                 $<TARGET_FILE:huntsman_firmware> --reference ${HUNTSMAN_PRODUCTION_REFERENCE}
             DEPENDS huntsman_firmware USES_TERMINAL VERBATIM)
     endif()

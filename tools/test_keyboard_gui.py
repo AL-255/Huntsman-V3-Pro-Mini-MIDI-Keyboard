@@ -17,7 +17,7 @@ def packet(ack=1, result=1, press=None, release=None, flags=7, sequence=0, versi
     size = SIZE if version >= 4 else 1088 if version >= 2 else 480
     data = bytearray(size)
     struct.pack_into('<4sH6B5I',data,0,f'HKG{version}'.encode(),size,version,1,61,flags,result,0,sequence,0,ack,0,0)
-    for offset,values in ((32,[3900]*61),(162,press or [3600]*61),(292,release or [3700]*61)):
+    for offset,values in ((32,[3900]*61),(162,press or [3500]*61),(292,release or [3600]*61)):
         struct.pack_into('<61H',data,offset,*values)
     if version >= 2:
         struct.pack_into('<61f' if version >= 3 else '<61i',data,447,*(velocity or [0]*61))
@@ -39,7 +39,7 @@ class Device(threading.Thread):
         self.fd,self.reject,self.mismatch,self.silent = fd,reject,mismatch,silent
         self.stop_event = threading.Event()
         self.commands = []
-        self.press,self.release = [3600]*61,[3700]*61
+        self.press,self.release = [3500]*61,[3600]*61
         self.mapping = [255]*61
         self.flags,self.ack,self.result,self.sequence = 7,0,0,0
         self.error = None
@@ -123,6 +123,11 @@ class Tests(unittest.TestCase):
         p=profile_from_snapshot(s)
         self.assertEqual(p['version'],2)
         validate_profile(p)
+        for key in p['keys']:
+            if key['label'] in ('Fn','LCt','LGu','LAl','RAl','RCt','Spc'):
+                key['midi']=60
+                with self.assertRaisesRegex(ValueError,'Reserved MIDI'): validate_profile(p)
+                key['midi']=255
         p['keys'][32]['midi']=128
         with self.assertRaises(ValueError): validate_profile(p)
         for offset,value in ((1032,2),(1033,11),(1034,2),(1035,2),(1036,128),(1101,1),(1112,1)):

@@ -47,8 +47,8 @@ def main():
         for trial in range(count + 12):
             raw = ([3800 if i != trial else 500 for i in range(count)] if trial < count
                    else [rng.randrange(1, 4097) for _ in range(count)])
-            expected_levels = [255 if r <= 500 else 0 if r >= 3800
-                               else ((3800 - r)*255 + 1650)//3300 for r in raw]
+            expected_levels = [0 if r <= 500 else 255 if r >= 3800
+                               else 255-((3800 - r)*255 + 1650)//3300 for r in raw]
             inputs = bytearray(225)
             for i, key in keys.items():
                 slot = next(j for j, row in enumerate(matrix) if row[0] == key)
@@ -63,7 +63,7 @@ def main():
                                       (C.c_uint16 * count)(*([3800]*count)), True, output)
             assert bytes(output) == expected, (profile, trial)
             if trial < count:
-                assert sum(v != 0 for v in output) == 3
+                assert sum(v != 0 for v in output) == 3*(count-1)
         print(f'PASS layout {profile}: {count} single-key isolations and 12 mixed frames match original ARM renderer')
     output = (C.c_uint8 * 204)(*([255]*204))
     lib.lighting_travel_frame(1, None, None, None, False, output)

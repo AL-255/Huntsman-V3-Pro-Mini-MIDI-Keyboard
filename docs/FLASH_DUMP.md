@@ -1,6 +1,6 @@
 # Private, read-only main-flash acquisition
 
-The `keyboard-calibration-parallel` application includes a bounded CDC
+The `keyboard-fn-menu` application includes a bounded CDC
 flash reader alongside MIDI, lighting and parallel calibration.
 Dump commands are read-only; calibration has separate, tightly bounded
 tail-page write APIs.
@@ -9,9 +9,9 @@ See [write scope and recovery](DEVICE_CONFIG_STORAGE.md).
 ## Build and use
 
 ```
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel --target audit-dump
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu --target audit-dump
 python3 -B tools/test_dump_flash.py
 python3 -u tools/dump_flash.py --start 0 --length 0x10000 \
   --output device-dumps/bootloader.device-dump.bin
@@ -49,7 +49,7 @@ Only explicit valid dump requests issue read commands through this interface,
 using NXP's register
 definitions and status codes at the existing SDK-initialized 96MHz clock.
 There are no ROM calls or flash dereferences. Dump requests cannot write;
-calibration has separate two-page-only write APIs.
+calibration and Fn+R profile reset have separate two-page-only write/erase APIs.
 The command adapter independently implements the register transaction observed
 in original routine `0x20001f94` (called by `0x2000ee04`): clear status, set the
 16-byte word address, select normal margin/ECC-enabled/no-DMACC, issue command
@@ -110,11 +110,10 @@ read/modify/erase/program/verify. These are storage facts, not copied code.
 
 ## Device readback and backup limits
 
-The installed application at physical `0x8000..0x28000` matches the build in
-two independent reads. Calibration-slot acquisition also matches twice and
-verifies a generation-1 HKC1 record. See [current validation](CALIBRATION.md).
-Application and per-device configuration acquisitions, endpoint CSV/JSON and
-their metadata are private, Git-ignored files under `device-dumps/`.
+The application image occupies physical `0x8000..0x28000`; this build still
+requires a hardware update and independent readback. See [validation status](CALIBRATION.md).
+Application/configuration acquisitions, endpoint CSV/JSON and their metadata
+are private, Git-ignored files under `device-dumps/`.
 
 The private bootloader-region acquisition has ECC holes in its first 304
 bytes, including its vectors. **It is not a restorable bootloader image.**

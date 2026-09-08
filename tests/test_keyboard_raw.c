@@ -9,6 +9,16 @@ static uint16_t raw[61];
 static void frame(void) { keyboard_raw_frame(&s, raw, 61, 1, true); }
 static bool a(void) { return keyboard_report_get_usage(&s.engine.report, 4); }
 
+/* Explicit test pairs keep the velocity waveform fixtures independent of
+ * the user's startup defaults. Main below tests the actual default pair. */
+static void velocity_init(keyboard_raw_t *keys)
+{
+    keyboard_raw_init(keys);
+    for (unsigned i=0;i<RAW_KEY_COUNT;++i) {
+        keys->press[i]=3600; keys->release[i]=3700;
+    }
+}
+
 static int compare_interval(const void *a, const void *b)
 {
     const int x = *(const int *)a, y = *(const int *)b;
@@ -86,7 +96,7 @@ static void velocity_tests(void)
 {
     keyboard_raw_t keys;
     uint16_t values[65];
-    keyboard_raw_init(&keys);
+    velocity_init(&keys);
     keyboard_raw_enable(&keys, false); /* tuning without host key injection */
     for (unsigned i = 0; i < 65; ++i) values[i] = 3900;
     keyboard_raw_frame(&keys, values, 65, 3, true);
@@ -155,7 +165,7 @@ static void velocity_clamp_tests(void)
         {4096,3096,2096,1096,96}    /* well above maximum */
     };
     for (unsigned k = 0; k < sizeof(points)/sizeof(points[0]); ++k) {
-        keyboard_raw_init(&s);
+        velocity_init(&s);
         for (unsigned i = 0; i < 61; ++i) raw[i] = 3900;
         frame(); raw[32] = 3500; frame();
         for (unsigned i = 0; i < 5; ++i) { raw[32] = points[k][i]; frame(); }
@@ -173,7 +183,7 @@ static void pop_filter_tests(void)
 {
     for (unsigned outlier=0;outlier<4;++outlier) {
         for (int spike=-1000;spike<=1000;spike+=2000) {
-            keyboard_raw_init(&s);
+            velocity_init(&s);
             for(unsigned i=0;i<61;++i) raw[i]=3900;
             frame(); raw[32]=3500; frame();
             int value=2000;
@@ -186,7 +196,7 @@ static void pop_filter_tests(void)
     }
     const uint16_t tie[2][5]={{3000,3000,2990,2970,2940},{3000,2970,2950,2940,2940}};
     for(unsigned k=0;k<2;++k) {
-        keyboard_raw_init(&s);
+        velocity_init(&s);
         for(unsigned i=0;i<61;++i) raw[i]=3900;
         frame(); raw[32]=3500; frame();
         for(unsigned j=0;j<5;++j) {raw[32]=tie[k][j]; frame();}
@@ -202,19 +212,20 @@ int main(void)
     velocity_clamp_tests();
     pop_filter_tests();
     keyboard_raw_init(&s);
+    for (unsigned i=0;i<RAW_KEY_COUNT;++i) assert(s.press[i]==3500 && s.release[i]==3600);
     for (unsigned i = 0; i < 61; ++i) raw[i] = 3900;
     assert(keyboard_key_for_sensor(1, 32) == 0x1f);
-    raw[32] = 3500; frame();
+    raw[32] = 2400; frame();
     assert(!s.armed && !a()); /* held at startup */
-    raw[32] = 3700; frame(); assert(!s.armed);
-    raw[32] = 3701; frame(); assert(s.armed && !a());
-    raw[32] = 3600; frame(); assert(!a());
-    raw[32] = 3599; frame(); assert(a());
+    raw[32] = 3600; frame(); assert(!s.armed);
+    raw[32] = 3601; frame(); assert(s.armed && !a());
+    raw[32] = 3500; frame(); assert(!a());
+    raw[32] = 3499; frame(); assert(a());
     for (unsigned i = 0; i < 100; ++i) {
-        raw[32] = i % 2 ? 3600 : 3700; frame(); assert(a());
+        raw[32] = i % 2 ? 3500 : 3600; frame(); assert(a());
     }
-    raw[32] = 3701; frame(); assert(!a());
-    raw[32] = 3650; frame(); assert(!a());
+    raw[32] = 3601; frame(); assert(!a());
+    raw[32] = 3550; frame(); assert(!a());
 
     assert(!keyboard_raw_set(&s, 61, 3000, 3100));
     assert(!keyboard_raw_set(&s, 32, 0, 3100));
@@ -225,9 +236,9 @@ int main(void)
     assert(s.revision == 0 && s.armed);
     assert(keyboard_raw_set(&s, 32, 3000, 3200));
     assert(s.revision == 1 && !s.armed && !a());
-    frame(); assert(s.armed);
+    raw[32]=3900; frame(); assert(s.armed);
     raw[32] = 2999; frame(); assert(a());
-    raw[33] = 3500; frame(); assert(s.down[33] && a());
+    raw[33] = 2400; frame(); assert(s.down[33] && a());
     raw[32] = 3201; frame(); assert(!a() && s.down[33]);
     raw[33] = 3900; frame();
 

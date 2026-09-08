@@ -120,9 +120,9 @@ uint32_t flash_calibration_read(unsigned slot, uint8_t *page)
     }
     return 0;
 }
-uint32_t flash_calibration_write(unsigned slot, const uint8_t *page)
+uint32_t flash_calibration_erase(unsigned slot)
 {
-    if (!page || !config_allowed(slot) || !calibration_record_valid(page)) return kStatus_FLASH_AddressError;
+    if (!config_allowed(slot)) return kStatus_FLASH_AddressError;
     const uint32_t address=slot ? CAL_SLOT_B : CAL_SLOT_A;
     board_watchdog_refresh();
     uint32_t irq=DisableGlobalIRQ();
@@ -132,9 +132,16 @@ uint32_t flash_calibration_write(unsigned slot, const uint8_t *page)
     uint32_t result=wait_done(2000000u);
     SYSCON->FMCFLUSH=1u;
     EnableGlobalIRQ(irq);
-    if (result) return result;
     board_watchdog_refresh();
-    irq=DisableGlobalIRQ();
+    return result;
+}
+uint32_t flash_calibration_write(unsigned slot, const uint8_t *page)
+{
+    if (!page || !config_allowed(slot) || !calibration_record_valid(page)) return kStatus_FLASH_AddressError;
+    uint32_t result=flash_calibration_erase(slot);
+    if (result) return result;
+    const uint32_t address=slot ? CAL_SLOT_B : CAL_SLOT_A;
+    uint32_t irq=DisableGlobalIRQ();
     FLASH->INT_CLR_STATUS=15u;
     for (unsigned i=0; i<CAL_PAGE_SIZE; i+=16u) {
         FLASH->STARTA=(address+i)>>4u;

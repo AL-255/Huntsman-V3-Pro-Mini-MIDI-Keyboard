@@ -1,6 +1,6 @@
 # Firmware-normalized floating-point velocity
 
-Normalization is included in the installed `keyboard-calibration-parallel`
+Normalization is included in the `keyboard-fn-menu`
 image with HKG6; see [current validation](CALIBRATION.md#validation-status).
 
 The keyboard forms four intervals from five post-trigger samples, discards
@@ -36,11 +36,11 @@ See [the complete wire layout](MIDI_PROTOCOL.md#hkg6-telemetry).
 ```sh
 cmake --preset host-tests
 cmake --build --preset host-tests
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
 ctest --preset host-tests
 python3 -B tools/test_keyboard_gui_tk.py
-cmake --build --preset keyboard-calibration-parallel --target audit-keyboard
+cmake --build --preset keyboard-fn-menu --target audit-keyboard
 ```
 
 Native and compiled ARM tests cover negative/zero clamping, a small positive

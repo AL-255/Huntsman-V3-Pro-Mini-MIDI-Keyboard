@@ -109,6 +109,12 @@
       "inherits": "keyboard-calibration",
       "displayName": "Independent simultaneous per-key calibration holds",
       "binaryDir": "${sourceDir}/build-keyboard-calibration-parallel"
+    },
+    {
+      "name": "keyboard-fn-menu",
+      "inherits": "keyboard-calibration-parallel",
+      "displayName": "Complete keyboard with Fn hints, actuation editor and brightness",
+      "binaryDir": "${sourceDir}/build-keyboard-fn-menu"
     }
   ],
   "buildPresets": [
@@ -127,7 +133,8 @@
     { "name": "keyboard-dump", "configurePreset": "keyboard-dump" },
     { "name": "keyboard-dump-controller", "configurePreset": "keyboard-dump-controller" },
     { "name": "keyboard-calibration", "configurePreset": "keyboard-calibration" },
-    { "name": "keyboard-calibration-parallel", "configurePreset": "keyboard-calibration-parallel" }
+    { "name": "keyboard-calibration-parallel", "configurePreset": "keyboard-calibration-parallel" },
+    { "name": "keyboard-fn-menu", "configurePreset": "keyboard-fn-menu" }
   ],
   "testPresets": [
     {

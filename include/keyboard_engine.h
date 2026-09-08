@@ -13,6 +13,9 @@ typedef struct {
 void keyboard_engine_init(keyboard_engine_t *engine, uint8_t profile);
 /* Events use recovered production key IDs, not scan indices or HID usages. */
 bool keyboard_engine_event(keyboard_engine_t *engine, uint8_t key, bool down);
+/* Application keyboard overrides; recovered editor/reference path is unchanged. */
+bool keyboard_application_event(keyboard_engine_t *engine, uint8_t key, bool down);
+uint8_t keyboard_shortcut_usage(uint8_t profile, uint8_t key);
 void keyboard_engine_release_all(keyboard_engine_t *engine);
 
 #endif

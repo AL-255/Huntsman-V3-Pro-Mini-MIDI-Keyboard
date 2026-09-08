@@ -77,6 +77,14 @@ checked against original ARM register transactions.
 The adapter accepts a slot number, never an arbitrary write address.
 Invalid slot, geometry, clock or record rejects before erase. CDC exposes no
 raw erase/program command. Only completing every key in calibration can save.
+Fn+R previews `RESET`; release opens `RESET?` with full-brightness green Y/red N.
+After all keys are released, a fresh Y press invokes the bounded clear operation;
+N cancels without erasing. Pre-held Y cannot confirm and simultaneous Y/N cancels.
+Both pages must be blank or recognizable HKC1 records before any erase; the
+older slot is cleared first and each erase is read back. Unknown contents or
+controller errors stop clearing. Empty pages are skipped. Successful clearing
+removes saved calibration and restores application defaults on neutral input;
+it does not erase factory/serial data or reboot USB. See [RESET](FN_MENU.md#reset-and-flash-boundaries).
 
 The original 1 KiB reservation at image offsets 0x1fc00/0x1fe00 remains FF.
 Although readback establishes physical application base 0x8000, we do not
@@ -89,11 +97,11 @@ secondary ASIC and the serial-number pages remain outside write scope.
 cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
 # Optional offline ARM dependencies and original reference required:
 python3 -B tools/test_calibration_arm.py \
-  build-keyboard-calibration-parallel/huntsman_firmware.elf --reference /path/to/original.bin
+  build-keyboard-fn-menu/huntsman_firmware.elf --reference /path/to/original.bin
 ```
 
 Native tests cover simultaneous 61/62/65-key holds at 8 kHz, independent
@@ -106,6 +114,6 @@ save and reboot loading.
 These tests never access the real keyboard. See [calibration operation](CALIBRATION.md)
 for physical validation status and limitations.
 
-A complete physical 61-key run saved generation 1 in slot A;
-independent two-pass readback and record CRC validation succeeded. Slot B was
-still blank. The per-device endpoint export is intentionally not committed.
+The Fn menu does not change this record format or write boundary. Brightness
+and trigger-point edits are RAM-only; trigger commits use loaded calibration
+bounds without changing the stored record.

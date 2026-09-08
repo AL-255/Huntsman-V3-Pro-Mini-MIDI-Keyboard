@@ -1,6 +1,6 @@
 # Optical scan and Fn behavior
 
-The complete `keyboard-calibration-parallel` application starts scanning and
+The complete `keyboard-fn-menu` application starts scanning and
 keyboard reporting after USB configuration. It uses the recovered optical
 ASIC path and key/action maps, per-key raw Schmitt thresholds, MIDI routing,
 travel lighting and parallel user calibration.
@@ -86,15 +86,25 @@ power-control behavior beyond the original register sequences.
 
 ## Keyboard integration
 
-Raw thresholds default to press 3600 / release 3700. Down requires strictly
+Raw thresholds default to press 3500 / release 3600. Down requires strictly
 less than press; up requires strictly more than release. Neutral arming,
 invalid/stale scan handling, GUI changes and USB reset protect against stuck
 reports. CDC does not need to stay open for normal keyboard operation.
 
 The Fn+Tab/Fn+Caps editors implement the recovered interactions above.
-Their normalized settings remain RAM-only and do not replace per-key raw
-Schmitt thresholds. Fn+Enter selects MIDI and Fn+C starts calibration in
-keyboard mode; those control chords take priority and are consumed.
+Actuation commits convert the original normalized threshold rules into raw
+Schmitt pairs using calibrated bounds; these edits remain RAM-only. Fn+Enter
+selects MIDI and Fn+C starts calibration in keyboard mode, outside editors.
+The [Fn menu](FN_MENU.md) supplies action hints, brightness controls and a
+tail-profile RESET. All settings choices preview their names while held and execute
+once on release, except RESET opens a green-Y/red-N confirmation before any
+erase. Brightness K/L taps can repeat with Fn continuously held; other choices
+require all keys released to rearm. Editor-internal controls retain the recovered behavior.
+
+Normal keyboard output uses an application override layer for right-side
+arrows and the green-hinted [Fn shortcuts](FN_MENU.md#keyboard-shortcuts).
+This leaves the recovered tables, reference event path and MIDI role mapping
+intact. Fn shortcuts are held NKRO keys rather than preview/release settings.
 
 See [GUI operation](KEYBOARD_GUI.md), [MIDI flow](MIDI_DESIGN.md),
 [calibration](CALIBRATION.md) and [lighting](TRAVEL_LIGHTING.md).
@@ -117,5 +127,5 @@ Use the [build guide](BUILDING.md) to run native tests and `audit-keyboard`.
 Reference-backed checks execute original initialized tables and compiled
 application paths with modeled peripherals. They do not prove electrical
 timing, physical scan cadence or full factory-feature equivalence. The
-[validation record](CALIBRATION.md#validation-status) describes the installed
-build and completed physical calibration.
+[validation record](CALIBRATION.md#validation-status) describes the current
+build and its hardware verification limits.

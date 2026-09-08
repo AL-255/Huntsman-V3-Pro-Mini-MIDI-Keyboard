@@ -6,6 +6,8 @@ import re
 from scan_bars import sensor_labels
 
 SIZE = 1152
+MIDI_CONTROLS = {'Fn':'mode', 'RAl':'oct−', 'RCt':'oct+',
+                 'LCt':'bend−', 'LAl':'bend+', 'LGu':'mod', 'Spc':'sustain'}
 MAGICS = (b'HKG1',b'HKG2',b'HKG3',b'HKG4',b'HKG5',b'HKG6')
 
 
@@ -204,7 +206,7 @@ def validate_profile(data):
         if data['version'] == 2:
             note = key.get('midi')
             if type(note) is not int or not (0 <= note <= 127 or note == 255): raise ValueError('Invalid MIDI note.')
-            if labels[index] in ('Fn','LCt','LAl') and note != 255: raise ValueError('Reserved MIDI control key.')
+            if labels[index] in MIDI_CONTROLS and note != 255: raise ValueError('Reserved MIDI control key.')
     return result
 
 

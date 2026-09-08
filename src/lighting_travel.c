@@ -18,7 +18,11 @@ void lighting_travel_frame(uint8_t profile, const uint16_t *raw, const uint16_t 
     for (unsigned i = 0; i < count; ++i)
     {
         const lighting_channels_t *channel = &g_lighting_channels[profile - 1u][i];
-        const uint8_t pwm = lighting_travel_pwm(raw[i], lower[i], upper[i]);
+        /* Invert only valid optical travel; invalid data must remain dark.
+         * The shared travel helper stays press-increasing for MIDI pressure. */
+        const bool usable=raw[i] && raw[i]<=4096u && lower[i] &&
+                          lower[i]<upper[i] && upper[i]<=4096u;
+        const uint8_t pwm = usable ? 255u-lighting_travel_pwm(raw[i],lower[i],upper[i]) : 0u;
         uint8_t *out = frame + (unsigned)channel->controller * 192u;
         out[channel->red] = out[channel->green] = out[channel->blue] = pwm;
     }

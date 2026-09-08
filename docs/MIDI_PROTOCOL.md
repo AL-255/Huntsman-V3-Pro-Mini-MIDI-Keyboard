@@ -11,8 +11,16 @@ four-byte USB-MIDI event packets on cable 0, MIDI channel 1:
 | Note On | `09` | `90` | note 0…127 | velocity 1…127 |
 | Note Off | `08` | `80` | latched note | 0 |
 | Poly Key Pressure | `0A` | `A0` | sounding note | pressure 0…127 |
+| Modulation | `0B` | `B0` | 1 | amount 0…127 |
+| Sustain | `0B` | `B0` | 64 | 127 pressed / 0 released |
+| Pitch Bend | `0E` | `E0` | value & 127 | value >> 7 |
 | Cleanup All Sound Off | `0B` | `B0` | 120 | 0 |
 | Cleanup All Notes Off | `0B` | `B0` | 123 | 0 |
+
+Pitch bend spans 0…16383 with center 8192 (`00 40`). Cleanup starts with
+sustain off, then all 128 Note Offs, CC120, CC123, modulation zero and centered
+pitch (133 packets). See [wheel scaling and scheduling](MIDI_DESIGN.md#modulation-and-pitch-wheels)
+and [sustain ordering](MIDI_DESIGN.md#sustain-pedal).
 
 This is MIDI 1.0, not MIDI 2.0 UMP, MPE, channel pressure or raw UART MIDI.
 Note names are a GUI convention: C0=12, middle C/C4=60. Flat spellings are
@@ -38,7 +46,7 @@ cfg calcancel ID
 ```
 
 `cfg midi` accepts 0…127 or 255 (unmapped). It rejects unsupported sensor
-indices and Fn/left Ctrl/left Alt controls. The current identified profile
+indices and Fn, Left Ctrl/Windows/Alt, Right Alt/Ctrl and Space controls. The current identified profile
 must exist. It releases active output, cancels pending strikes, increments the
 shared RAM configuration revision and changes one mapping. On success, the
 snapshot contains the exact new value; the GUI checks both ACK and readback.
@@ -119,7 +127,7 @@ Version 1 remains threshold-only. Version 2 adds integer `midi` to every one of
 the 61 ANSI key objects:
 
 ```json
-{"sensor": 32, "label": "A", "press": 3600, "release": 3700, "midi": 60}
+{"sensor": 32, "label": "A", "press": 3500, "release": 3600, "midi": 60}
 ```
 
 The surrounding object has `version: 2`, `layout: "ansi"`, and `keys` containing

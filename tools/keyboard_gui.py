@@ -10,7 +10,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from keyboard_gui_model import Snapshot, ansi_geometry, profile_from_snapshot, validate_pair, validate_profile, note_name, parse_note
+from keyboard_gui_model import Snapshot, ansi_geometry, profile_from_snapshot, validate_pair, validate_profile, note_name, parse_note, MIDI_CONTROLS
 from keyboard_gui_transport import Connection
 
 
@@ -70,7 +70,7 @@ class App:
         ttk.Label(panel,textvariable=self.key_title,style='Title.TLabel').pack(anchor='w')
         self.details = tk.StringVar(value='Waiting for device telemetry')
         ttk.Label(panel,textvariable=self.details,justify='left',wraplength=355).pack(anchor='w',pady=10)
-        self.press = tk.StringVar(value='3600'); self.release = tk.StringVar(value='3700')
+        self.press = tk.StringVar(value='3500'); self.release = tk.StringVar(value='3600')
         for title,var in (('Press when raw <',self.press),('Release when raw >',self.release)):
             row = ttk.Frame(panel); row.pack(fill='x',pady=3)
             ttk.Label(row,text=title,width=21).pack(side='left')
@@ -88,7 +88,7 @@ class App:
         self.midi_entry.pack(side='left')
         self.midi_button = ttk.Button(midi_row,text='Apply MIDI mapping',command=self.apply_midi)
         self.midi_button.pack(side='left',padx=6)
-        ttk.Label(panel,text='Fn+Enter: keyboard ↔ MIDI; LCtrl/LAlt: octave −/+\nMIDI channel 1; C0=12; C4=60. Notes/Off configurable.\nRAM-only; host JSON export includes MIDI mappings.\nConfig edits release keys/notes and wait for neutral.',justify='left').pack(anchor='w')
+        ttk.Label(panel,text='Fn+Enter: keyboard ↔ MIDI; RAlt/RCtrl: octave −/+\nLCtrl/LAlt: pitch −/+; LWin: modulation\nSpace: sustain (CC64), uses key thresholds\nWheels: raw 3800 = 0%, 1000 = 100%\nMIDI channel 1; C4=60. Notes/Off configurable.\nRAM-only; host JSON export includes MIDI mappings.\nConfig edits release keys/notes and wait for neutral.',justify='left').pack(anchor='w')
         self.graph = tk.Canvas(lower,height=200,bg='#17232d',highlightthickness=0)
         self.graph.pack(side='right',fill='both',expand=True)
         root.protocol('WM_DELETE_WINDOW',self.close)
@@ -146,7 +146,7 @@ class App:
         for key in self.keys:
             label = key.label
             if s and s.version >= 4 and s.count == 61:
-                suffix = {'Fn':'mode','LCt':'−8','LAl':'+8'}.get(label,note_name(s.midi_mapping[key.sensor]))
+                suffix = MIDI_CONTROLS.get(label,note_name(s.midi_mapping[key.sensor]))
                 label += '/'+suffix
             if key.sensor in self.titles: self.canvas.itemconfigure(self.titles[key.sensor],text=label)
         if s and s.count == 61:
@@ -216,7 +216,7 @@ class App:
         try:
             if not self.usable() or self.snapshot.version < 4: raise ValueError('Connect to keyboard-midi firmware first.')
             label = next(k.label for k in self.keys if k.sensor == self.selected)
-            if label in ('Fn','LCt','LAl'): raise ValueError('This key is a reserved MIDI mode/octave control.')
+            if label in MIDI_CONTROLS: raise ValueError('This key is a reserved MIDI mode/octave/wheel/sustain control.')
             self.connection.submit('midi',self.selected,parse_note(self.midi_note.get()))
             self.message.set('MIDI mapping queued; waiting for device ACK/readback…')
         except (ValueError,queue.Full) as error: messagebox.showerror('MIDI mapping',str(error))
@@ -258,7 +258,7 @@ class App:
             for index,pair in sorted(values.items()): self.connection.submit('set',index,*pair)
             if profile['version'] == 2:
                 for key in profile['keys']:
-                    if key['label'] not in ('Fn','LCt','LAl'): self.connection.submit('midi',key['sensor'],key['midi'])
+                    if key['label'] not in MIDI_CONTROLS: self.connection.submit('midi',key['sensor'],key['midi'])
             self.connection.submit('enable',int(enabled))
             self.message.set('Applying profile with per-key readback; a failure cancels remaining changes.')
         except (ValueError,OSError,queue.Full) as error: messagebox.showerror('Load profile',str(error))
@@ -269,7 +269,7 @@ class App:
             raw = [3900]*61
             raw[32] = int(3900-2600*(.5+.5*math.sin(time.monotonic()*2)))
             self.snapshot = Snapshot(1,61,7,1,int(time.monotonic()*30),0,0,0,0,
-                                     tuple(raw),(3600,)*61,(3700,)*61,tuple(v<3600 for v in raw),bytes(16),
+                                     tuple(raw),(3500,)*61,(3600,)*61,tuple(v<3500 for v in raw),bytes(16),
                                      velocity=tuple(0.5 if i == 32 else 0.0 for i in range(61)),
                                      captures=tuple(1 if i == 32 else 0 for i in range(61)),
                                      velocity_state=tuple(2 if i == 32 else 1 for i in range(61)),version=3)
@@ -299,7 +299,7 @@ class App:
         for button in (self.enable_button,self.disable_button,self.apply_button,self.load_button):
             button.configure(state='normal' if self.usable() else 'disabled')
         self.apply_all_button.configure(state='normal' if self.usable() and s.version >= 2 else 'disabled')
-        midi_usable = self.usable() and s.version >= 4 and next(k.label for k in self.keys if k.sensor == self.selected) not in ('Fn','LCt','LAl')
+        midi_usable = self.usable() and s.version >= 4 and next(k.label for k in self.keys if k.sensor == self.selected) not in MIDI_CONTROLS
         self.midi_button.configure(state='normal' if midi_usable else 'disabled')
         supported = self.usable(allow_calibration=True) and s.version >= 5 and bool(s.calibration_flags & 4)
         active = supported and bool(s.calibration_flags & 1)

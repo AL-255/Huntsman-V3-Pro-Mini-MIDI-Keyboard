@@ -96,11 +96,12 @@ def main():
             dev.service(100)
             payload = next(data[2:] for _, data in reversed(dev.transactions) if len(data) == 194)
             c, r, g, b = maps[profile-1][32]
-            pwm = 0 if raw >= 3800 else ((3800-raw)*255 + 1485)//2970
+            pwm = 255 if raw >= 3800 else 255-((3800-raw)*255 + 1485)//2970
             assert (payload[r], payload[g], payload[b]) == (pwm,)*3
             # Keyboard/MIDI candidate adds the persistent green Enter marker.
             indicator = int('s_midi' in dev.symbols)
-            assert sum(v != 0 for v in payload) == (3 if pwm else 0) + indicator
+            primary_keys=sum(c==0 for c,_,_,_ in maps[profile-1])
+            assert sum(v != 0 for v in payload) == 3*primary_keys-(0 if pwm else 3)-2*indicator
         if profile == 1:
             dev.raw[32] = 2300
             dev.service(100)
@@ -116,10 +117,10 @@ def main():
             dev.pump_i2c()
             payload = dev.transactions[-1][1][2:]
             _, r, g, b = maps[0][32]
-            assert (payload[r], payload[g], payload[b]) == (129,)*3
+            assert (payload[r], payload[g], payload[b]) == (126,)*3
             dev.service(60)
             payload = next(data[2:] for _, data in reversed(dev.transactions) if len(data) == 194)
-            assert (payload[r], payload[g], payload[b]) == (255,)*3
+            assert (payload[r], payload[g], payload[b]) == (0,)*3
             # Invalid ADC input blanks the entire next lighting snapshot.
             dev.raw[0] = 0
             dev.service(60)

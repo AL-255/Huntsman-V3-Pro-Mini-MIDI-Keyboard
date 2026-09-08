@@ -35,17 +35,17 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
 ```
 
 The ARM toolchain file is `cmake/arm-none-eabi.cmake`; no IDE-generated project
-is necessary. `keyboard-calibration-parallel` inherits the recovered scan/lighting application
+is necessary. `keyboard-fn-menu` inherits the recovered scan/lighting application
 and enables standalone keyboard mode. `firmware` is a USB-only diagnostic
 preset and does **not** enable MIDI performance or automatic scanning.
-Use `keyboard-calibration-parallel` for the complete application.
+Use `keyboard-fn-menu` for the complete application.
 
-Artifacts in `build-keyboard-calibration-parallel`:
+Artifacts in `build-keyboard-fn-menu`:
 
 - `huntsman_firmware.elf`: debug symbols, linked ARM instructions and memory map.
 - `huntsman_firmware.hex`: addressed Intel HEX.
@@ -62,18 +62,18 @@ blank application-image reservation, reset/stack bounds, USB VID/PID, interface 
 endpoint layout, strings and HID descriptors. They do not validate an actual
 bootloader's flash mapping or authorize flashing.
 
-A clean export of the tracked source builds without the updater, extraction
-or private device data. With the tested toolchain, its binary matches the
-[installed image](CALIBRATION.md#validation-status) byte for byte, and all nine
-native suites pass. Newlib may emit linker warnings about unimplemented
+The complete application builds without the updater, extraction or private
+device data. All ten native suites pass. See [validation status](CALIBRATION.md#validation-status)
+for the hardware boundary. Newlib may emit linker warnings about unimplemented
 `_close`, `_lseek`, `_read` and `_write`; those functions are absent from the
 final linked image after garbage collection. CDC debug output uses the
 application's USB transport, not libc file I/O.
 
 ## Tests that need no original firmware or device
 
-The nine CTest suites cover core logic, raw keyboard/velocity, MIDI state,
-parallel calibration/storage, GUI model/PTY transport, image reservation,
+The ten CTest suites cover core logic, raw keyboard/velocity, MIDI state and
+interruptible text lighting,
+Fn menu/threshold conversion, parallel calibration/storage, GUI model/PTY transport, image reservation,
 scan display, compact captures and flash-dump framing.
 Neither the updater EXE nor proprietary extracted firmware is needed for
 these tests or the application build.
@@ -84,7 +84,7 @@ For linked-ARM USB tests:
 python3 -m venv .venv-audit
 . .venv-audit/bin/activate
 python3 -m pip install -r tools/requirements-audit.txt
-cmake --build --preset keyboard-calibration-parallel --target audit-usb
+cmake --build --preset keyboard-fn-menu --target audit-usb
 ```
 
 Pinned optional dependencies are Unicorn 2.1.4 and pyelftools 0.33. The USB
@@ -110,11 +110,12 @@ sibling path `../extracted_firmware/raw/Talia_T1_60%_7203_App_FW_v2.1.0_E888780F
 To select another read-only location:
 
 ```sh
-cmake --preset keyboard-calibration-parallel \
+cmake --preset keyboard-fn-menu \
   -DHUNTSMAN_PRODUCTION_REFERENCE=/absolute/path/to/primary-app.bin
-cmake --build --preset keyboard-calibration-parallel --target audit-keyboard
-cmake --build --preset keyboard-calibration-parallel --target audit-lighting
-cmake --build --preset keyboard-calibration-parallel --target audit-calibration
+cmake --build --preset keyboard-fn-menu --target audit-keyboard
+cmake --build --preset keyboard-fn-menu --target audit-lighting
+cmake --build --preset keyboard-fn-menu --target audit-calibration
+cmake --build --preset keyboard-fn-menu --target audit-menu
 ```
 
 These execute compiled ARM scan/MIDI/LED paths using synthetic optical replies

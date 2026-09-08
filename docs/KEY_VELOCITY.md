@@ -1,16 +1,16 @@
 # Per-key velocity and apply-all thresholds
 
-Current firmware is `keyboard-calibration-parallel` with HKG6, normalized float
+Current firmware is `keyboard-fn-menu` with HKG6, normalized float
 velocity and the four-interval pop filter. See [MIDI design](MIDI_DESIGN.md)
 and [current validation](CALIBRATION.md#validation-status).
 
 ```sh
-cmake --preset keyboard-calibration-parallel
-cmake --build --preset keyboard-calibration-parallel
+cmake --preset keyboard-fn-menu
+cmake --build --preset keyboard-fn-menu
 python3 tools/keyboard_gui.py --device /dev/ttyACM0
 ```
 
-Use `build-keyboard-calibration-parallel/huntsman_firmware.bin` for an authorized
+Use `build-keyboard-fn-menu/huntsman_firmware.bin` for an authorized
 application-only flash. Use the matching GUI from this checkout.
 
 ## GUI
@@ -129,7 +129,7 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 python3 -B tools/test_keyboard_gui_tk.py
-cmake --build --preset keyboard-calibration-parallel --target audit-lighting
+cmake --build --preset keyboard-fn-menu --target audit-lighting
 ```
 
 Coverage: 65 simultaneous different slopes; equality/release gating; three

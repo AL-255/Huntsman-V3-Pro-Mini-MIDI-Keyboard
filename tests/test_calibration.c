@@ -6,6 +6,24 @@
 static uint8_t pages[2][512];
 static unsigned writes, cut=512;
 static uint32_t read_error, write_error;
+static unsigned erases, erase_order[2];
+static uint32_t erase_error;
+static bool erase_bad_verify;
+static unsigned erase_stop_slot, erase_prefix;
+static uint32_t interrupted_erase(unsigned slot)
+{
+    assert(slot<2);
+    memset(pages[slot],255,slot==erase_stop_slot ? erase_prefix : 512);
+    return slot==erase_stop_slot ? 105 : 0;
+}
+static uint32_t erase_page(unsigned slot)
+{
+    assert(slot<2 && erases<2); erase_order[erases++]=slot;
+    if (erase_error) return erase_error;
+    memset(pages[slot],255,512);
+    if (erase_bad_verify) pages[slot][0]=0;
+    return 0;
+}
 static uint32_t read_page(unsigned slot, uint8_t *out) { assert(slot<2); memcpy(out,pages[slot],512); return read_error; }
 static uint32_t write_page(unsigned slot, const uint8_t *in)
 {
@@ -138,6 +156,30 @@ int main(void)
     calibration_record(pages[0],1,61,UINT32_MAX,c.lower,c.upper);
     calibration_record(pages[1],1,61,0,c.lower,c.upper);
     calibration_store_load(&store,1,61,lo,hi,read_page); assert(store.slot==1 && !store.generation);
+    uint8_t saved_pages[2][512]; memcpy(saved_pages,pages,sizeof(pages));
+    for (erase_stop_slot=0;erase_stop_slot<2;++erase_stop_slot)
+        for (erase_prefix=0;erase_prefix<=512;++erase_prefix) {
+            memcpy(pages,saved_pages,sizeof(pages));
+            calibration_store_t attempt=store, reboot;
+            assert(!calibration_store_clear(&attempt,read_page,interrupted_erase));
+            calibration_store_load(&reboot,1,61,lo,hi,read_page);
+            assert(!reboot.saved || reboot.generation==0); /* never the older UINT32_MAX record */
+        }
+    memcpy(pages,saved_pages,sizeof(pages));
+    pages[0][0]=0;
+    assert(!calibration_store_clear(&store,read_page,erase_page) && !erases && store.error==0x20002);
+    memcpy(pages,saved_pages,sizeof(pages)); read_error=116;
+    assert(!calibration_store_clear(&store,read_page,erase_page) && !erases);
+    read_error=0; erase_error=105;
+    assert(!calibration_store_clear(&store,read_page,erase_page) && erases==1 && store.saved);
+    erases=0; erase_error=0; erase_bad_verify=true;
+    assert(!calibration_store_clear(&store,read_page,erase_page) && erases==1 && store.error==0x20003);
+    erases=0; erase_bad_verify=false; memcpy(pages,saved_pages,sizeof(pages));
+    assert(calibration_store_clear(&store,read_page,erase_page));
+    assert(erases==2 && erase_order[0]==0 && erase_order[1]==1 && !store.saved && !store.generation);
+    for (unsigned i=0;i<sizeof(pages);++i) assert(((uint8_t *)pages)[i]==255);
+    erases=0; assert(calibration_store_clear(&store,read_page,erase_page) && !erases);
+    calibration_store_load(&store,1,61,lo,hi,read_page); assert(!store.saved);
     c.completed=60; before=writes;
     assert(!calibration_store_save(&store,&c,read_page,write_page) && writes==before);
     c.completed=61; calibration_finish(&c,true,70000); assert(c.state==CAL_DONE);
