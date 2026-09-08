@@ -20,17 +20,17 @@ the corresponding actual instructions. Some functions have noncontiguous bodies.
 
 | Address | Recovered role | Implementation |
 | --- | --- | --- |
-| `0x2000d5d4`, `0x200142fc` | Key-event routing and action dispatch | `src/keyboard_engine.c` |
-| `0x2000b4d8` | Normal/FN action lookup | `src/keyboard_layout.c` |
-| `0x200141f8` | FN state; release held actions whose layers differ | `src/keyboard_engine.c` |
-| `0x2000f41c` | Control action `0x70` enters actuation editor, `0x71` rapid-trigger editor | `src/keyboard_config.c` |
-| `0x200134fc` | Editor key handling, level changes, switching and exit | `src/keyboard_config.c` |
-| `0x2001a3bc` | Commit thresholds/profile changes | RAM-only subset in `src/keyboard_config.c` |
-| `0x2000cbf0`, `0x2000c1cc` | Layout patch and raw-sensor mapping | `src/keyboard_layout.c` |
-| `0x20015dec`, `0x2000e354` | Calibration endpoints and inverse raw-to-level conversion | `src/optical_key.c`, `src/keyboard_scan.c` |
-| `0x20015c04`, `0x200164ac`, `0x2001620c`, `0x20015bc0` | Normal thresholds, rapid-trigger exclusions, editor previews | `src/keyboard_scan.c` |
-| `0x2001a918` | Ordinary/rapid-trigger hysteresis | `src/optical_key.c` |
-| `0x2000ca68`, `0x2000dbac`, `0x200174bc` | GPIO sequence, SPI/DMA setup, ASIC scheduler | `src/optical_bus.c`, `src/optical_transport.c` |
+| `0x2000d5d4`, `0x200142fc` | Key-event routing and action dispatch | `firmware/app/src/keyboard_engine.c` |
+| `0x2000b4d8` | Normal/FN action lookup | `firmware/boards/huntsman_v3_pro_mini/src/keyboard_layout.c` |
+| `0x200141f8` | FN state; release held actions whose layers differ | `firmware/app/src/keyboard_engine.c` |
+| `0x2000f41c` | Control action `0x70` enters actuation editor, `0x71` rapid-trigger editor | `firmware/app/src/keyboard_config.c` |
+| `0x200134fc` | Editor key handling, level changes, switching and exit | `firmware/app/src/keyboard_config.c` |
+| `0x2001a3bc` | Commit thresholds/profile changes | RAM-only subset in `firmware/app/src/keyboard_config.c` |
+| `0x2000cbf0`, `0x2000c1cc` | Layout patch and raw-sensor mapping | `firmware/boards/huntsman_v3_pro_mini/src/keyboard_layout.c` |
+| `0x20015dec`, `0x2000e354` | Calibration endpoints and inverse raw-to-level conversion | `firmware/boards/huntsman_v3_pro_mini/src/optical_key.c`, `firmware/boards/huntsman_v3_pro_mini/src/keyboard_scan.c` |
+| `0x20015c04`, `0x200164ac`, `0x2001620c`, `0x20015bc0` | Normal thresholds, rapid-trigger exclusions, editor previews | `firmware/boards/huntsman_v3_pro_mini/src/keyboard_scan.c` |
+| `0x2001a918` | Ordinary/rapid-trigger hysteresis | `firmware/boards/huntsman_v3_pro_mini/src/optical_key.c` |
+| `0x2000ca68`, `0x2000dbac`, `0x200174bc` | GPIO sequence, SPI/DMA setup, ASIC scheduler | `firmware/boards/huntsman_v3_pro_mini/src/optical_bus.c`, `firmware/boards/huntsman_v3_pro_mini/src/optical_transport.c` |
 
 The production key IDs are **not HID usages**: FN=`3b`, Tab=`10`, Caps=`1e`,
 Escape=`6e`; number-row 1 through 0 are IDs `02` through `0b`.

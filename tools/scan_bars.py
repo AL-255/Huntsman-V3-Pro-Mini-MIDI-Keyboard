@@ -12,7 +12,7 @@ CELL = 2
 
 def sensor_labels():
     # Reuse the firmware's production-derived tables, not a guessed scan order.
-    source = (Path(__file__).resolve().parent.parent / 'src/keyboard_reference_tables.c').read_text()
+    source = (Path(__file__).resolve().parent.parent / 'firmware/boards/huntsman_v3_pro_mini/src/keyboard_reference_tables.c').read_text()
 
     def table(name, count, width):
         body = source.split(f'{name}[{count}] = {{', 1)[1].split('};', 1)[0]

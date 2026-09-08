@@ -1,6 +1,6 @@
 # Keyboard and MIDI performance design
 
-Current application: `keyboard-fn-menu`, built, tested and flashed. See
+Current Huntsman application: `huntsman` (alias `keyboard-fn-menu`). See
 [current validation](CALIBRATION.md#validation-status) and
 [filter design](MIDI_FILTER.md).
 This is application behavior, not a claim that the stock firmware implements
@@ -13,7 +13,10 @@ Calibration uses a separately bounded two-page flash writer.
 `keyboard_raw.c` owns per-sensor Schmitt state and independent five-sample
 velocity registration. `keyboard_midi.c` owns performance mode, MIDI mapping,
 octave, pending strikes, note ownership and MIDI transmission scheduling.
-`keyboard_live.c` joins these to the existing optical, USB and lighting services.
+`keyboard_app.c` owns the shared frame/service lifecycle and storage callbacks.
+The Huntsman board's `keyboard_live.c` joins that lifecycle to the optical,
+USB and lighting services; `keyboard_command.c` handles common configuration.
+See [architecture](ARCHITECTURE.md) for the SDK-free board contract.
 `keyboard_menu.c` owns all held-shortcut previews and dispatches actions on release.
 Brightness K/L can be tapped repeatedly with Fn held without rearming host
 output. RESET opens a Y/N confirmation and remains output-suppressed until
@@ -30,7 +33,8 @@ valid optical frame → raw Schmitt edges and per-key velocity windows
 main loop → queued note/pedal events first → latest wheels → changed pressure → NXP USB IN
 ```
 
-The MIDI state is 1540 bytes, with fixed capacities and no dynamic allocation.
+The Huntsman MIDI state is 1540 bytes, with fixed capacities and no dynamic allocation.
+Other boards select their sensor, light-frame and HID capacities at build time.
 The current application uses 24328/24576 bytes SRAMX,
 15488/16384 bytes USB SRAM, and a separate 8192-byte stack. The reserved final
 1024 application-image bytes remain unused. Calibration state uses 1324 bytes
@@ -106,8 +110,10 @@ menus, with preview while a choice is held and commit on its release.
 Only enabled, in-scale, in-range notes receive normal note backlighting.
 
 Fn+Left Shift toggles a RAM-only `lower_muted` flag via the shared preview/release menu.
-The layout setup caches the Caps/Shift rows in a nine-byte sensor bitmap using
-physical IDs 0x1e..0x39, including ISO/JIS extras. Note creation and the LED
+The layout setup caches the Caps/Shift rows in a sensor bitmap through the
+board's `keyboard_lower_group` query. Huntsman uses nine bytes and physical
+IDs 0x1e..0x39, including ISO/JIS extras; the application does not assume those
+IDs for other boards. Note creation and the LED
 mask share `note_enabled`; arbitrary GUI mappings cannot bypass the physical
 row gate. The Esc/Tab rows and bottom row are unaffected. Enter's explicit
 blue indicator remains visible even when its assigned note is muted.
@@ -124,11 +130,12 @@ For samples y1…y5 **after** the press threshold crossing:
 ```
 d = [y1-y2, y2-y3, y3-y4, y4-y5]
 outlier = earliest interval with largest abs(d[i] - median(d))
-counts_per_second = (sum(d) - d[outlier]) / 3 * 8000
+counts_per_second = (sum(d) - d[outlier]) / 3 * layout.sample_hz
 normalized = clamp(counts_per_second / 4500000, 0, 1)
 MIDI attack velocity = max(1, round(normalized * 127))
 ```
 
+Huntsman declares a nominal `sample_hz = 8000`; other boards supply their rate.
 For four values, median means the midpoint of the two middle sorted values.
 Exactly one interval is discarded, even when all deviations tie. Fractions
 are retained until float normalization. The filter adds no scan delay beyond

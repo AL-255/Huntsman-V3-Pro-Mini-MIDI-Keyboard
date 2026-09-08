@@ -90,7 +90,7 @@ JIS uses 183 primary plus 12 secondary channels. Unmapped channels stay zero.
 
 `tools/lighting_reference_tables.py` executes the original scatter initializer,
 the two layout patches and controller initialization/maintenance routines.
-It emits `src/lighting_reference_tables.c`, not a handwritten physical-row
+It emits `firmware/boards/huntsman_v3_pro_mini/src/lighting_reference_tables.c`, not a handwritten physical-row
 guess. The observed register programs are:
 
 - Primary: `fe=c5`, `fd=03`, `00=05`, `01=ff`, `0f=07`, `10=07`,
@@ -138,7 +138,7 @@ lighting-off, validity, stale-frame and pending-buffer rules.
 The build uses the existing official MCUXpresso Installer-selected NXP source
 snapshots and Arm GNU 14.2.1 toolchain. No vendor sources were modified. LED
 GPIO, clock, FLEXCOMM and I2C operations use the SDK. The old blocking
-`src/lighting.c` is not linked into the application.
+`firmware/boards/huntsman_v3_pro_mini/src/lighting.c` is not linked into the application.
 
 Production uses DMA channel 7 and retries/reinitializes on errors. The application
 deliberately uses the SDK's **nonblocking interrupt** I2C API: its DMA error

@@ -194,7 +194,7 @@ MIDI cleanup or LED transfers. Explicit lighting-off and fault/stale blanking
 remain authoritative.
 
 `keyboard_text_start(state, profile, string, now_ms)` in
-[keyboard_text.c](../src/keyboard_text.c) resolves ASCII letters to physical
+[keyboard_text.c](../firmware/app/src/keyboard_text.c) resolves ASCII letters to physical
 sensors using the base layout, independent of MIDI mappings. It copies up to
 32 supported characters (letters and `-`/`+`/`?`), accepts either case, ignores other characters and keeps
 no borrowed string pointer. Minus uses the minus key; plus uses the `=`/`+`

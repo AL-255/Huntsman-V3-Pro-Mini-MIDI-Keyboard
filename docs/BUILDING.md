@@ -24,8 +24,8 @@ are recorded in [ORIGINS](../third_party/ORIGINS.md).
 ## Fresh build
 
 ```sh
-git clone git@github.com:AL-255/Huntsman-V3-Pro-Mini-MIDI-Keyboard.git
-cd Huntsman-V3-Pro-Mini-MIDI-Keyboard
+git clone git@github.com:AL-255/MIDI-Typist.git
+cd MIDI-Typist
 arm-none-eabi-gcc --version
 cmake --version
 ninja --version
@@ -35,15 +35,33 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
+cmake --preset huntsman
+cmake --build --preset huntsman
 ```
 
 The ARM toolchain file is `cmake/arm-none-eabi.cmake`; no IDE-generated project
-is necessary. `keyboard-fn-menu` inherits the recovered scan/lighting application
+is necessary. `huntsman` selects the Huntsman board and aliases
+`keyboard-fn-menu`, which inherits the recovered scan/lighting application
 and enables standalone keyboard mode. `firmware` is a USB-only diagnostic
 preset and does **not** enable MIDI performance or automatic scanning.
-Use `keyboard-fn-menu` for the complete application.
+Use `huntsman` for the complete application. Existing presets and the
+`huntsman_firmware` artifact names remain supported for tooling compatibility.
+
+The SDK-free desktop port uses the same application sources with a synthetic
+104-key layout and 2 kHz ascending 16-bit input:
+
+```sh
+cmake --preset simulator
+cmake --build --preset simulator
+ctest --preset simulator
+./build-simulator/midi_typist_sim
+```
+
+Its commands include `status`, `set SENSOR ADC`, `step MILLISECONDS`,
+the shared `cfg` commands, and `quit`. Time advances only through `step`;
+HID/MIDI packets print to stdout, and calibration storage is process RAM.
+It never opens USB devices or flashes hardware. See the
+[porting guide](PORTING.md) for selecting another `MT_BOARD`.
 
 Artifacts in `build-keyboard-fn-menu`:
 
@@ -63,7 +81,7 @@ endpoint layout, strings and HID descriptors. They do not validate an actual
 bootloader's flash mapping or authorize flashing.
 
 The complete application builds without the updater, extraction or private
-device data. All ten native suites pass. See [validation status](CALIBRATION.md#validation-status)
+device data. All twelve native suites pass. See [validation status](CALIBRATION.md#validation-status)
 for the hardware boundary. Newlib may emit linker warnings about unimplemented
 `_close`, `_lseek`, `_read` and `_write`; those functions are absent from the
 final linked image after garbage collection. CDC debug output uses the
@@ -71,7 +89,8 @@ application's USB transport, not libc file I/O.
 
 ## Tests that need no original firmware or device
 
-The ten CTest suites cover core logic, raw keyboard/velocity, MIDI state and
+The twelve CTest suites cover application portability and architecture boundaries,
+core logic, raw keyboard/velocity, MIDI state and
 interruptible text lighting,
 Fn menu/threshold conversion, parallel calibration/storage, GUI model/PTY transport, image reservation,
 scan display, compact captures and flash-dump framing.

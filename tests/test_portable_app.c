@@ -1,0 +1,202 @@
+#include "keyboard_raw.h"
+#include "keyboard_app.h"
+#include "keyboard_midi.h"
+#include "keyboard_menu.h"
+#include "keyboard_calibration.h"
+#include "keyboard_sample.h"
+#include "keyboard_layout.h"
+#include "synthetic_board.h"
+#include <assert.h>
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+static keyboard_raw_t raw;
+static keyboard_midi_t midi;
+static keyboard_menu_t menu;
+static keyboard_calibration_t app_cal;
+static keyboard_app_t app;
+static uint16_t samples[SYN_COUNT],lo[SYN_COUNT],hi[SYN_COUNT];
+static uint8_t rgb[LIGHTING_FRAME_SIZE],packets[1024][4];
+static unsigned logged;
+static uint32_t now;
+static unsigned saved,loaded,resets;
+static bool refuse_output;
+static keyboard_report_t hid;
+static bool load_bounds(uint8_t profile,uint8_t count,uint16_t *lower,uint16_t *upper)
+{
+    assert(((profile==SYN_PROFILE && count==SYN_COUNT) || (profile==43 && count==7)) && lower && upper);
+    ++loaded; return false;
+}
+static bool save_bounds(const keyboard_calibration_t *cal)
+{
+    assert(cal->completed==SYN_COUNT && cal->lower[103]==1000);
+    ++saved; return true;
+}
+static bool clear_settings(void) { ++resets; return true; }
+static const keyboard_app_ops_t ops={load_bounds,save_bounds,clear_settings,NULL,NULL};
+static bool send_hid(const keyboard_report_t *report)
+{
+    if(refuse_output) return false;
+    hid=*report; return true;
+}
+static bool send(uint8_t a,uint8_t b,uint8_t c,uint8_t d)
+{
+    assert(logged<1024);
+    memcpy(packets[logged++],(uint8_t[]){a,b,c,d},4); return true;
+}
+static void drain(void) { for(unsigned i=0;i<300;++i) keyboard_midi_service(&midi,now,send); }
+static void frame(void)
+{
+    keyboard_app_frame(&app,samples,SYN_COUNT,SYN_PROFILE,lo,hi,true,now++);
+}
+static void init(void)
+{
+    synthetic_board_init();
+    keyboard_app_init(&app,&raw,&midi,&menu,&app_cal,&ops);
+    for(unsigned i=0;i<SYN_COUNT;++i) { samples[i]=3900; lo[i]=1000; hi[i]=4000; }
+    saved=loaded=resets=0; refuse_output=false;
+    logged=now=0; frame(); drain(); logged=0; assert(raw.armed && loaded==1);
+}
+static void chord(unsigned sensor)
+{
+    samples[SYN_FN]=samples[sensor]=3000; frame();
+    samples[SYN_FN]=samples[sensor]=3900; frame(); frame(); drain(); logged=0;
+}
+static void normalizer(void)
+{
+    uint16_t value=123;
+    assert(!keyboard_sample_normalize(10,20,20,&value) && value==123);
+    assert(!keyboard_sample_normalize(10,0,65535,NULL));
+    for(unsigned n=1;n<=4096;++n) {
+        assert(keyboard_sample_normalize(n,4096,1,&value) && value==n);
+        assert(keyboard_sample_normalize(n,1,4096,&value) && value==4097-n);
+    }
+    uint16_t prior=4096;
+    for(unsigned n=0;n<=65535;++n) {
+        assert(keyboard_sample_normalize(n,0,65535,&value));
+        assert(value>=1 && value<=4096 && value<=prior); prior=value;
+    }
+    assert(value==1);
+    assert(keyboard_sample_normalize(0,1000,3000,&value) && value==4096);
+    assert(keyboard_sample_normalize(65535,1000,3000,&value) && value==1);
+}
+static void performance(void)
+{
+    init(); samples[100]=3499; frame();
+    assert(keyboard_report_get_usage(&raw.engine.report,4));
+    samples[100]=3900; frame();
+    assert(!keyboard_report_get_usage(&raw.engine.report,4));
+    samples[SYN_RALT]=3000; frame();
+    assert(raw.engine.report.modifiers==64 && !keyboard_report_get_usage(&raw.engine.report,0x50));
+    samples[SYN_RALT]=3900; frame(); assert(!raw.engine.report.modifiers);
+    samples[103]=3000; frame(); assert(keyboard_report_get_usage(&raw.engine.report,0x87));
+    samples[103]=3900; frame(); assert(!keyboard_report_get_usage(&raw.engine.report,0x87));
+    chord(SYN_ENTER); assert(midi.mode==1 && raw.armed);
+    samples[SYN_SPACE]=3499; frame(); drain();
+    assert(logged==1 && packets[0][1]==0xb0 && packets[0][2]==64 && packets[0][3]==127);
+    samples[SYN_SPACE]=3600; frame(); drain(); assert(logged==1);
+    samples[SYN_SPACE]=3601; frame(); drain(); assert(logged==2 && !packets[1][3]);
+    lighting_travel_frame(SYN_PROFILE,samples,lo,hi,true,rgb); keyboard_midi_lights(&midi,rgb,now);
+    assert(rgb[SYN_SPACE*3]==0 && rgb[SYN_SPACE*3+1]==0 && rgb[SYN_SPACE*3+2]==255);
+    samples[SYN_TAB]=3499; frame();
+    for(unsigned i=0;i<5;++i) { samples[SYN_TAB]=3400-i*100; frame(); }
+    assert(fabsf(raw.velocity[SYN_TAB].value-200000.0f/4500000.0f)<0.000001f);
+    drain(); assert(midi.refs[72]==1);
+    samples[SYN_TAB]=3900; frame(); drain(); assert(!midi.refs[72]);
+    chord(SYN_SHIFT); assert(midi.lower_muted);
+    lighting_travel_frame(SYN_PROFILE,samples,lo,hi,true,rgb); keyboard_midi_lights(&midi,rgb,now);
+    assert(rgb[100*3]==0 && rgb[100*3+1]==0 && rgb[100*3+2]==0);
+    chord(SYN_S); assert(menu.music_page==MENU_SCALE);
+    samples[SYN_H]=3000; frame(); samples[SYN_H]=3900; frame(); frame(); drain();
+    assert(midi.music.scale==MIDI_SCALE_PHRYGIAN);
+    chord(SYN_E); assert(menu.music_page==MENU_KEY);
+    samples[SYN_TAB]=3000; frame(); samples[SYN_TAB]=3900; frame(); frame(); drain();
+    assert(midi.music.root==0);
+}
+static void calibration(void)
+{
+    keyboard_calibration_t cal; calibration_init(&cal);
+    assert(!calibration_start(&cal,1,SYN_COUNT,0));
+    assert(calibration_start(&cal,SYN_PROFILE,SYN_COUNT,0));
+    for(unsigned i=0;i<SYN_COUNT;++i) samples[i]=4000;
+    calibration_frame(&cal,samples,true,true,0);
+    calibration_frame(&cal,samples,true,true,500);
+    assert(cal.state==CAL_COLLECT);
+    for(unsigned i=0;i<SYN_COUNT;++i) samples[i]=1000;
+    calibration_frame(&cal,samples,true,false,501);
+    calibration_lights(&cal,rgb,501);
+    assert(rgb[103*3]==128 && rgb[103*3+1]==48);
+    calibration_frame(&cal,samples,true,false,1501);
+    assert(cal.completed==SYN_COUNT && cal.state==CAL_SAVE);
+    assert(calibration_bounds_valid(SYN_PROFILE,SYN_COUNT,cal.lower,cal.upper));
+}
+static void lifecycle(void)
+{
+    init();
+    samples[100]=3000; frame();
+    keyboard_app_service(&app,now,true,send_hid,send);
+    assert(keyboard_report_get_usage(&hid,4));
+    refuse_output=true; samples[100]=3900; frame();
+    keyboard_app_service(&app,now,true,send_hid,send);
+    assert(keyboard_report_get_usage(&hid,4)); /* pending transfer immutable */
+    refuse_output=false; keyboard_app_service(&app,now,true,send_hid,send);
+    assert(!keyboard_report_get_usage(&hid,4));
+    samples[100]=3000; frame(); keyboard_app_service(&app,now,true,send_hid,send);
+    now+=100; keyboard_app_service(&app,now,true,send_hid,send);
+    assert(!raw.armed && !keyboard_report_get_usage(&hid,4));
+    keyboard_app_lights(&app,lo,hi,rgb,now);
+    for(unsigned i=0;i<sizeof(rgb);++i) assert(!rgb[i]);
+    frame(); assert(!raw.armed);
+    samples[100]=3900; frame(); assert(raw.armed);
+    assert(keyboard_app_calibrate(&app,now,true));
+    frame(); now+=500; frame(); assert(app_cal.state==CAL_COLLECT);
+    for(unsigned i=0;i<SYN_COUNT;++i) samples[i]=1000;
+    frame(); now+=1000; frame();
+    assert(app_cal.state==CAL_DONE && saved==1 && !raw.armed);
+    assert(lo[103]==1000 && hi[103]==3900);
+    keyboard_app_service(&app,now,true,send_hid,send);
+    assert(!keyboard_report_get_usage(&hid,4));
+    keyboard_app_invalidate(&app,now);
+    assert(!app.sent_valid && !raw.armed);
+    keyboard_app_frame(&app,NULL,SYN_COUNT,SYN_PROFILE,lo,hi,true,now);
+    assert(!raw.valid);
+}
+static void commands(void)
+{
+    init(); uint32_t ack=10; uint8_t result=9;
+    assert(!keyboard_app_command(&app,"unknown",now,true,&ack,&result));
+    assert(keyboard_app_command(&app,"cfg get 4294967296",now,true,&ack,&result));
+    assert(ack==10 && result==9);
+    assert(keyboard_app_command(&app,"cfg set 11 103 3000 3200",now,true,&ack,&result));
+    assert(ack==11 && result==1 && raw.press[103]==3000 && !raw.armed);
+    frame(); assert(raw.armed);
+    assert(keyboard_app_command(&app,"cfg midi 12 103 70",now,true,&ack,&result));
+    assert(result==1 && midi.mapping[103]==70);
+    assert(keyboard_app_command(&app,"cfg midi 13 3 70",now,true,&ack,&result));
+    assert(result==2 && midi.mapping[SYN_SPACE]==255);
+    const char *bad[]={"cfg set 14","cfg set 14 3","cfg set 14 3 3000",
+                      "cfg set 14 104 3000 3200","cfg set 14 103 3200 3000",
+                      "cfg all 14 3000 4096","cfg all 14 3000 3200 x"};
+    for(unsigned i=0;i<sizeof(bad)/sizeof(bad[0]);++i) {
+        assert(keyboard_app_command(&app,bad[i],now,true,&ack,&result));
+        assert(result==2 && raw.press[103]==3000);
+    }
+}
+static void layout_change(void)
+{
+    init(); assert(keyboard_app_calibrate(&app,now,true)); frame();
+    assert(calibration_active(&app_cal));
+    uint16_t small[7]={3900,3900,3900,3900,3900,3900,3900};
+    keyboard_app_frame(&app,small,7,43,lo,hi,true,now++);
+    assert(raw.count==7 && raw.profile==43 && !calibration_active(&app_cal) && !saved);
+    assert(loaded==2);
+    synthetic_rate(0); assert(!keyboard_layout_count(SYN_PROFILE));
+    keyboard_app_frame(&app,samples,SYN_COUNT,SYN_PROFILE,lo,hi,true,now);
+    assert(!raw.valid);
+}
+int main(void)
+{
+    normalizer(); performance(); calibration(); lifecycle(); commands(); layout_change();
+    puts("PASS SDK-free application: 104 keys, opaque IDs/layout, 2kHz velocity, 16-bit ascending ADC, linear LEDs, HID/MIDI/sustain/menus/scales, parallel calibration");
+}

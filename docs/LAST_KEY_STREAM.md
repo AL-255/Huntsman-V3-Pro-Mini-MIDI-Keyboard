@@ -102,7 +102,7 @@ key. The warning-and-restart behavior applies to both one-shot and repeat
 captures; samples from different sensors never contribute to the same velocity
 fit. Missing/truncated reports still fail. In one-shot mode, reports after the
 completed 20-sample interval are outside the capture and are not consumed.
-This behavior is host-only and works with the currently flashed firmware.
+This behavior is host-only and uses the firmware's compact capture protocol.
 
 `--buffer-frames` sets the pending host output limit (default 8192). Output is
 nonblocking and may batch consecutive lines into writes without omitting any.

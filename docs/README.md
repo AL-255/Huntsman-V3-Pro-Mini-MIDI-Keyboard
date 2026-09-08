@@ -3,7 +3,7 @@
 Start with the illustrated [user manual](../USER_MANUAL.md) for everyday operation,
 the [project README](../README.md) for a project overview, and the
 [build guide](BUILDING.md) for a clean checkout. The current complete preset is
-`keyboard-fn-menu`, emitting HKG6 telemetry.
+`huntsman` (alias `keyboard-fn-menu`), emitting HKG6 telemetry.
 
 ## Current behavior and protocols
 
@@ -25,6 +25,12 @@ the [project README](../README.md) for a project overview, and the
 - [USB integration](USB_DESIGN.md) and [optical/Fn design](KEYBOARD_RECOVERY.md).
 - [SDK provenance and licenses](../third_party/ORIGINS.md).
 
+## Application and board ports
+
+- [Architecture](ARCHITECTURE.md): shared application, board contracts and compatibility.
+- [Porting guide](PORTING.md): build selection, samples, keys, LEDs, USB and storage.
+- [Scheduling](SCHEDULING.md): cooperative ownership and the FreeRTOS tradeoff.
+
 Project-authored documentation describes only the latest build. Update or
 remove obsolete claims in place; do not append development snapshots. Keep
 unverified behavior explicit. This is enforced as a contributor rule in
@@ -34,7 +40,7 @@ unverified behavior explicit. This is enforced as a contributor rule in
 
 The latest build is validated by native tests and compiled ARM/register models,
 including comparison with original editor instructions and number-row colors.
-The application is flashed with matching full-image readback, healthy live CDC
-scans and unchanged calibration pages. See [validation limits](CALIBRATION.md#validation-status).
+The current refactored application has not been flashed or physically validated.
+See [validation limits](CALIBRATION.md#validation-status).
 Tests do not establish physical LED appearance, 8 kHz acquisition, calibrated
 force/distance or comprehensive USB/DAW compliance, and do not flash hardware.

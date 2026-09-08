@@ -88,7 +88,7 @@ acquisition consumes hardware scans, not GUI frames.
 
 ## Validation status
 
-The latest complete application is `keyboard-fn-menu`. Native tests cover
+The latest complete application is `huntsman` (alias `keyboard-fn-menu`). Native tests cover
 independent parallel holds, timing, aborts, record validation and simulated
 power-cut boundaries. Compiled ARM tests cover Fn+C/GUI entry, output isolation,
 parallel completion, two-page save/reload and original-controller register
@@ -96,9 +96,9 @@ differentials. The Fn-menu audit also checks that trigger/brightness edits
 and calibration cancellation issue no writes and preserve a loaded record.
 
 Build artifact: `build-keyboard-fn-menu/huntsman_firmware.bin`, 131072 bytes,
-SHA256 `c16c30a61a7930db89cabe9276687ed81da8c9328e62b59053ef236c677c0bde`.
-Application load is 78120 bytes, SRAMX 24328/24576 and USB RAM 15488/16384;
-the separate 8 KiB stack is retained. Ten native suites, original lighting-channel
+SHA256 `7aad237327434f5484800affd232b2cc175b694bd45f8ff7ea1f384136a082bc`.
+Application load is 78056 bytes, SRAMX 24328/24576 and USB RAM 15488/16384;
+the separate 8 KiB stack is retained. Twelve native suites, original lighting-channel
 comparisons, and compiled USB/MIDI/lighting checks pass, including inverse
 brightness, live MIDI mapping masks, right-side octave controls and fixed-range
 modulation/pitch wheels. Enter and the MIDI controls use full channel intensity;
@@ -122,13 +122,12 @@ all layouts, exact Schmitt boundaries, blue lighting, CC64/note ordering,
 queued pedal edges under backpressure, Fn/cleanup rearming and overflow pedal-off.
 These checks do not represent physical root/scale or sustain keypresses.
 
-The supplied updater has flashed this application through computer-initiated
-bootloader entry. Full 131072-byte readback at physical `0x8000` matches the
-build SHA256 above, with no flash-controller/ECC read errors. Both calibration
-tail pages are byte-for-byte unchanged. After reboot, live HKG6 telemetry
-advances with 61 valid sensors, calibration generation 0 (no saved calibration)
-and zero scan, lighting, MIDI or calibration errors. Live readback confirms
-press 3500 / release 3600 on every sensor.
+The current refactored application has not been flashed. Physical application
+readback, live CDC health and calibration-page preservation therefore remain
+unverified for this exact artifact. Tests and builds do not access the device.
+The SDK-free simulator additionally validates the shared lifecycle with 104
+sensors, a different scan rate and ADC polarity, a wider HID report, layout
+changes and independent parallel calibration.
 
 Fn+R RESET requires a fresh Y confirmation after all keys are released; N or
 simultaneous Y/N cancels. Tests cover pre-held Y rejection, full-brightness

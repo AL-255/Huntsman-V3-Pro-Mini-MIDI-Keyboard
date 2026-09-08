@@ -1,5 +1,6 @@
 #include "keyboard_menu.h"
-#include "keyboard_layout.h"
+#include "travel_lighting.h"
+#include "huntsman_layout.h"
 #include "keyboard_scan.h"
 #include <assert.h>
 #include <stdio.h>

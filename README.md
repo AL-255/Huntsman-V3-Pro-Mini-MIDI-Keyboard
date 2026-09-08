@@ -1,20 +1,31 @@
-# Huntsman V3 Pro Mini MIDI Keyboard
+# MIDI-Typist
 
 For everyday use, read the illustrated, self-contained [keyboard user manual](USER_MANUAL.md).
 
-An independent LPC5528 application for the Razer Huntsman V3 Pro Mini, using
-the official NXP MCUXpresso USB and peripheral drivers. It retains the
-existing bootloader and computer-initiated application updater.
+Portable C11 firmware for turning analog keyboards into NKRO keyboards and
+expressive MIDI controllers. The application is separate from board-specific
+scanning, lighting, USB, storage and updater integration.
 
-**Current build: `keyboard-fn-menu`.** It provides a lit Fn system menu,
+The supported physical board is the **Razer Huntsman V3 Pro Mini (LPC5528)**,
+using the official NXP MCUXpresso USB/peripheral drivers. Its existing
+bootloader and computer-initiated application updater are retained.
+A 104-key desktop reference port demonstrates the same application without
+NXP dependencies; this is not a universal binary for unported keyboards.
+
+Use `cmake --preset huntsman` / `cmake --build --preset huntsman` for the
+keyboard, or `simulator` for the desktop port. Existing presets remain valid.
+See [architecture](docs/ARCHITECTURE.md), [adding a board](docs/PORTING.md),
+[scheduling/FreeRTOS](docs/SCHEDULING.md), and [building from scratch](docs/BUILDING.md).
+The feature guide and host GUI below describe the Huntsman port.
+
+**Current build: `huntsman` (alias `keyboard-fn-menu`).** It provides a lit Fn system menu,
 calibrated trigger-point editing, backlight brightness controls, NKRO typing,
 43-note MIDI mapping with velocity/aftertouch, parallel calibration and a
 read-only CDC flash dumper. Calibration alone persists in two reserved tail
 pages, preserving serial-number storage.
 
-This build is flashed, with full application readback matching the build and
-live CDC scans reporting no scan, lighting or MIDI errors. Saved calibration
-pages are unchanged. Physical animation appearance still needs user validation.
+Native portability/regression tests and compiled hardware checks are described
+in [validation status](docs/CALIBRATION.md#validation-status).
 Build/test commands never flash hardware. See [the documentation guide](docs/README.md).
 
 ## Use the keyboard
@@ -199,22 +210,22 @@ EXE, original firmware, SDK installation or network download is needed to
 compile the application.
 
 ```sh
-git clone git@github.com:AL-255/Huntsman-V3-Pro-Mini-MIDI-Keyboard.git
-cd Huntsman-V3-Pro-Mini-MIDI-Keyboard
+git clone git@github.com:AL-255/MIDI-Typist.git
+cd MIDI-Typist
 
 cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
+cmake --preset huntsman
+cmake --build --preset huntsman
 ```
 
 Outputs in `build-keyboard-fn-menu/`: `huntsman_firmware.elf`, `.hex` and
 `.bin`. The binary is exactly **131072 bytes**. The linker and post-build
 validator enforce application/config boundaries, vectors and USB descriptors.
 
-**Use `keyboard-fn-menu`, not `firmware`, for the complete application.**
+**Use `huntsman`, not `firmware`, for the complete application.**
 The `firmware` preset is intentionally USB-only.
 See [clean builds, dependencies and testing](docs/BUILDING.md).
 

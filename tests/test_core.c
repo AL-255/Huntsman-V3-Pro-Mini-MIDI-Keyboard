@@ -1,4 +1,5 @@
 #include "keyboard.h"
+#include "huntsman_layout.h"
 #include "optical_scan.h"
 #include "updater_protocol.h"
 

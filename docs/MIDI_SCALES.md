@@ -8,7 +8,7 @@ selector map and interaction instructions.
 
 ## Portable musical data
 
-[midi_music.h](../include/midi_music.h) and [midi_music.c](../src/midi_music.c)
+[midi_music.h](../firmware/app/include/midi_music.h) and [midi_music.c](../firmware/app/src/midi_music.c)
 depend only on standard C integer/boolean types, not the SDK or board.
 
 - `midi_scales` owns each scale's name, physical selector letter and 12-bit
@@ -59,7 +59,7 @@ unchanged. The lower-row mute remains an independent intersecting filter.
 
 ## Table-driven menu integration
 
-The `options` table in [keyboard_menu.c](../src/keyboard_menu.c) defines the
+The `options` table in [keyboard_menu.c](../firmware/app/src/keyboard_menu.c) defines the
 Fn selector's HID usage/modifier, keyboard/MIDI availability and preview word.
 The same table resolves sensors, filters edges, recognizes keyboard settings
 and paints Fn hints. A 16-bit Schmitt-history bitmap covers the ten options,
