@@ -65,7 +65,16 @@ static void report_action(uint8_t profile, uint8_t key, bool fn, bool applicatio
         }
     }
     const keyboard_action_t *action=keyboard_action(profile,key,fn);
-    if (action && action->type==2) { *modifier=action->arg0; *usage=action->arg1; }
+    if (action && action->type==2) { *modifier=action->arg0; *usage=action->arg1; return; }
+    /* A modifier whose Fn entry is not a keyboard action keeps its modifier
+     * bit: production's Fn entry for Left Shift is a configuration action, and
+     * dropping the bit made Fn+Shift+Esc send an unshifted grave accent
+     * instead of a tilde. Right-side modifiers have real Fn navigation
+     * entries and keep those, so only the unreplaced modifier survives. */
+    if (fn) {
+        const keyboard_action_t *base=keyboard_action(profile,key,0);
+        if (base && base->type==2 && base->arg1==0 && base->arg0) *modifier=base->arg0;
+    }
 }
 
 static bool engine_event(keyboard_engine_t *engine, uint8_t key, bool down, bool application)

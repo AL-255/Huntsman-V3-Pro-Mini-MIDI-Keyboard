@@ -36,6 +36,20 @@ def keyboard_mapping_tests(args):
             set_keys(**{'Fn' if release_fn_first else label:3900})
             assert not usages(), (label,usages())
             set_keys(**{'Fn':3900,label:3900})
+    # Left Shift stays a normal modifier while Fn is held, so Fn+Shift+Esc is
+    # a tilde: Shift + grave (0x35) when Fn precedes Esc, or Shift + the base
+    # grave (0x29) when Esc was already held before Fn.
+    for order,expected in ((('LSh','Fn','Esc'),0x35),(('Fn','LSh','Esc'),0x35),
+                           (('LSh','Esc','Fn'),0x29),(('Fn','Esc','LSh'),0x35)):
+        set_keys(LSh=3900,Fn=3900,Esc=3900)
+        assert not usages()
+        for label in order: set_keys(**{label:500})
+        report=dev.reports[-1]
+        assert report[0]==0x02, (order,bytes(report))
+        pressed={u for u in range(4,116) if report[2+(u-4)//8] & (1<<((u-4)%8))}
+        assert pressed=={expected}, (order,pressed)
+        set_keys(LSh=3900,Fn=3900,Esc=3900)
+        assert not usages(), order
     set_keys(Fn=500); dev.service(60)
     frame=next(p[2:] for _,p in reversed(dev.transactions) if len(p)==194)
     for label in shortcuts:

@@ -290,12 +290,57 @@ static void pop_filter_tests(void)
     puts("PASS pop filter: filtered ten-sample windows at every glitch position; five-sample windows unfiltered; earliest tie wins");
 }
 
+static void fn_layer_modifier_test(void)
+{
+    /* Left Shift must stay a normal modifier while Fn is held: with the Fn
+     * layer's configuration entry replacing its action the bit was dropped,
+     * so Fn+Shift+Esc sent an unshifted grave accent instead of a tilde. */
+    keyboard_raw_init(&s);
+    unsigned shift=RAW_KEY_COUNT, fn=RAW_KEY_COUNT, esc=RAW_KEY_COUNT;
+    for (unsigned i=0;i<61;++i) {
+        const uint8_t key=keyboard_key_for_sensor(1,i);
+        const keyboard_action_t *a=keyboard_action(1,key,0);
+        if (a && a->type==2 && a->arg0==2 && !a->arg1) shift=i;
+        if (key==keyboard_layout(1)->fn) fn=i;
+        if (key==keyboard_layout(1)->escape) esc=i;
+    }
+    assert(shift<61 && fn<61 && esc<61);
+    for (unsigned i=0;i<61;++i) raw[i]=3900;
+    frame(); /* neutral, armed */
+    raw[shift]=3400; frame();
+    assert(s.engine.report.modifiers==2 && !keyboard_report_get_usage(&s.engine.report,0x35));
+    raw[fn]=3400; frame();
+    assert(s.engine.report.modifiers==2);
+    raw[esc]=3400; frame();
+    assert(s.engine.report.modifiers==2 && keyboard_report_get_usage(&s.engine.report,0x35));
+    /* Releasing Fn first keeps Shift asserted and drops the shortcut. */
+    raw[fn]=3900; frame();
+    assert(s.engine.report.modifiers==2 && !keyboard_report_get_usage(&s.engine.report,0x35));
+    raw[esc]=3900; frame(); raw[shift]=3900; frame();
+    assert(!s.engine.report.modifiers);
+    /* Fn+RShift keeps its documented navigation remap. */
+    keyboard_raw_init(&s);
+    for (unsigned i=0;i<61;++i) raw[i]=3900;
+    frame();
+    raw[fn]=3400; frame();
+    unsigned rshift=RAW_KEY_COUNT;
+    for (unsigned i=0;i<61;++i) {
+        const keyboard_action_t *a=keyboard_action(1,keyboard_key_for_sensor(1,i),0);
+        if (a && a->type==2 && a->arg0==32) rshift=i;
+    }
+    assert(rshift<61);
+    raw[rshift]=3400; frame();
+    assert(!s.engine.report.modifiers && keyboard_report_get_usage(&s.engine.report,0x52));
+    puts("PASS Fn layer: Left Shift keeps its modifier (Fn+Shift+Esc = tilde), Right Shift keeps its Up-arrow remap");
+}
+
 int main(void)
 {
     velocity_tests();
     velocity_history_oracle();
     velocity_clamp_tests();
     pop_filter_tests();
+    fn_layer_modifier_test();
     keyboard_raw_init(&s);
     for (unsigned i=0;i<RAW_KEY_COUNT;++i) assert(s.press[i]==3500 && s.release[i]==3600);
     for (unsigned i = 0; i < 61; ++i) raw[i] = 3900;

@@ -48,6 +48,11 @@ action without executing it. GUI calibration entry remains immediate.
 | N / M | End / Page Down |
 | H / J | Home / Page Up |
 
+Left Shift stays a normal modifier in the Fn layer, so **Fn+Shift+Esc is a
+tilde** and Fn+Shift+1 is Shift+F1; a shortcut key held before Fn keeps its
+base output until it is released. Right-side modifiers keep their navigation
+remaps (see below), which intentionally replace the modifier function.
+
 All twenty shortcut keys are green in the keyboard-mode Fn hint frame.
 They send held NKRO usages, with no text preview or settings action on release.
 Keep Fn held for repeated taps or simultaneous shortcuts. Releasing either
