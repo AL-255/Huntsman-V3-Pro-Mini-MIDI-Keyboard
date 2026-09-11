@@ -225,7 +225,7 @@ static void janko_mode(void)
     janko_strike(0x29,58,0); /* Esc  A#3 */
     janko_strike(0x1e,60,0); /* 1    C4  */
     janko_strike(0x2e,82,0); /* =    A#5 */
-    janko_strike(0x2b,71,0); /* Tab  B4  */
+    janko_strike(0x2b,59,0); /* Tab  B3  */
     janko_strike(0x14,61,0); /* Q    C#4 */
     janko_strike(0x1c,83,0); /* Y    B5  */
     janko_strike(0x30,95,0); /* ]    B6  */
