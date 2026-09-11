@@ -21,6 +21,7 @@ static bool s_gui_mode;
 static bool s_dump_mode;
 static bool s_pressed[65];
 static uint8_t s_selected, s_profile;
+static uint8_t s_key_sensor; /* 0..64 fixed sensor; 255 auto-select first press */
 static uint16_t s_threshold;
 static uint32_t s_session;
 
@@ -38,8 +39,9 @@ void scan_stream_init(void)
     s_key_mode = s_key_fault = s_fault_sent = false;
     s_gui_mode = false;
     s_dump_mode = false;
+    s_key_sensor = 255u;
 }
-void scan_stream_last_key(uint16_t threshold, uint32_t session)
+void scan_stream_last_key(uint16_t threshold, uint32_t session, uint8_t sensor)
 {
     scan_stream_stop(); /* explicit session boundary; pending IN stays immutable */
     s_dump_mode = false;
@@ -50,6 +52,7 @@ void scan_stream_last_key(uint16_t threshold, uint32_t session)
     s_threshold = threshold;
     s_session = session;
     s_selected = 255u;
+    s_key_sensor = sensor;
     s_profile = 0u;
     memset(s_pressed, 0, sizeof(s_pressed));
     scan_stream_start();
@@ -141,11 +144,21 @@ void scan_stream_push(const uint16_t *samples, uint8_t count, uint8_t profile, u
         for (unsigned i = 0; i < count; ++i)
         {
             if (!samples[i] || samples[i] > 4096u) flags |= 4u;
-            const bool pressed = samples[i] < s_threshold;
-            if (pressed && !s_pressed[i] && newest == 255u) newest = i;
-            s_pressed[i] = pressed;
+            if (s_key_sensor > 64u)
+            {
+                const bool pressed = samples[i] < s_threshold;
+                if (pressed && !s_pressed[i] && newest == 255u) newest = i;
+                s_pressed[i] = pressed;
+            }
         }
-        if (newest != 255u) s_selected = newest;
+        if (s_key_sensor <= 64u)
+        {
+            /* Pinned session: stream the fixed sensor every scan regardless of
+             * threshold crossings, so the host can capture full-rate edges. */
+            if (s_key_sensor >= count) flags |= 4u;
+            s_selected = s_key_sensor;
+        }
+        else if (newest != 255u) s_selected = newest;
         key_record(s_records + s_head * SCAN_STREAM_KEY_SIZE,
                    s_selected < count ? samples[s_selected] : 0u, flags);
         s_head = (s_head + 1u) % capacity();

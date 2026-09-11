@@ -8,7 +8,9 @@
 void scan_stream_gui(void);
 bool scan_stream_gui_enabled(void);
 void scan_stream_gui_push(const uint8_t report[SCAN_STREAM_GUI_SIZE]);
-void scan_stream_last_key(uint16_t threshold, uint32_t session);
+void scan_stream_last_key(uint16_t threshold, uint32_t session, uint8_t sensor);
+/* sensor 0..64 pins the session to one sensor (raw streamed every scan);
+ * 255 keeps the first-crossing auto-selection of the existing mode. */
 void scan_stream_whole(void);
 void scan_stream_init(void);
 void scan_stream_start(void);

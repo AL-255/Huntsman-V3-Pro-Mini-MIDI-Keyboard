@@ -357,7 +357,7 @@ bool keyboard_live_command(const char *line)
     {
         debug_write("scan start | scan stop | scan status | scan sample XX (raw index hex)\r\n"
                     "stream on | stream off (HKS1 binary uint16 scan frames; default on when scanning)\r\n"
-                    "stream key N [session] (HKL1; decimal threshold 1..4096, optional uint32 session)\r\n"
+                    "stream key N [session [sensor]] (HKL1; decimal threshold 1..4096, optional uint32 session, optional sensor 0..64 pins one key, 255 = first press)\r\n"
                     "keys on | keys off | keys status | trace on | trace off\r\n"
                     "keys on requires neutral valid samples; one scan attempt per boot.\r\n");
 #ifdef HUNTSMAN_KEYBOARD_MODE
@@ -383,13 +383,14 @@ bool keyboard_live_command(const char *line)
 #endif
     if (!strncmp(line, "stream key ", 11u))
     {
-        uint32_t threshold = 0u, session = 0u;
+        uint32_t threshold = 0u, session = 0u, sensor = 255u;
         const char *p = line + 11u;
         bool valid = decimal(&p, &threshold) && threshold && threshold <= 4096u;
         if (valid && *p == ' ') { ++p; valid = decimal(&p, &session); }
-        if (!valid || *p)
-        { debug_write("ERR stream key threshold[1..4096] [uint32 session]\r\n"); return true; }
-        scan_stream_last_key((uint16_t)threshold, session);
+        if (valid && *p == ' ' && p[1]) { ++p; valid = decimal(&p, &sensor); }
+        if (!valid || *p || (sensor != 255u && sensor > 64u))
+        { debug_write("ERR stream key threshold[1..4096] [uint32 session] [sensor 0..64 or 255]\r\n"); return true; }
+        scan_stream_last_key((uint16_t)threshold, session, (uint8_t)sensor);
         s_stream_requested = true;
     }
     else if (!strcmp(line, "stream on")) { scan_stream_whole(); s_stream_requested = true; }

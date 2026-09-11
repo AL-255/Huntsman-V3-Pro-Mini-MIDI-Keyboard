@@ -38,7 +38,7 @@ def compact_tests(elf):
     for hs in (False, True):
         dev = ConsoleArm(elf, hs)
         dev.call('scan_stream_init')
-        dev.call('scan_stream_last_key', 3800, 123)
+        dev.call('scan_stream_last_key', 3800, 123, 255)
         raw = [3800]*61
         decoder = KeyDecoder(3800, 123)
         for changes, expected in (({},None), ({5:3799},3799), ({5:3900},3900),
@@ -63,7 +63,7 @@ def compact_tests(elf):
     push(dev, 10); dev.call('debug_service')
     address,length = dev.packet(9)
     saved = bytes(dev.cpu.mem_read(address,length))
-    dev.call('scan_stream_last_key', 3700, 456)
+    dev.call('scan_stream_last_key', 3700, 456, 255)
     key_push(dev,[3600]*61)
     assert bytes(dev.cpu.mem_read(address,length)) == saved
     data = drain(dev)
@@ -75,7 +75,7 @@ def compact_tests(elf):
 
     # Queue overflow must be latched and explicitly reported even if no new
     # input arrives after the overflow. It may not silently resume streaming.
-    dev.call('scan_stream_last_key',3800,123)
+    dev.call('scan_stream_last_key',3800,123,255)
     key_push(dev,[3700]*61); dev.call('debug_service')
     address,length = dev.packet(9)
     saved = bytes(dev.cpu.mem_read(address,length))
@@ -89,7 +89,7 @@ def compact_tests(elf):
     except StreamError as error: assert 'overflow' in str(error)
     key_push(dev,[3700]*61)
     assert drain(dev) == b''
-    dev.call('scan_stream_last_key',3800,999)
+    dev.call('scan_stream_last_key',3800,999,255)
     key_push(dev,[3700]*61)
     assert list(KeyDecoder(3800,999).feed(drain(dev))) == [3700]
     # Reset/cancel also fails the current compact session, never retries it.
@@ -97,7 +97,24 @@ def compact_tests(elf):
     dev.configure(True)
     try: list(KeyDecoder(3800,999).feed(drain(dev))); raise AssertionError('reset accepted')
     except StreamError as error: assert 'overflow' in str(error)
-    print('PASS compact mode switches, immutable pending IN, fail-stop overflow/reset, explicit restart')
+
+    # Pinned-sensor sessions stream the fixed key every scan regardless of
+    # threshold crossings elsewhere; the selection bitmap never applies.
+    dev.call('scan_stream_last_key',3800,700,5)
+    pinned = KeyDecoder(3800,700)
+    for other,raw5,expected in ((4,3800,3800),(4,3799,3799),(7,3800,3800),(0,3801,3801)):
+        values = [3800]*61
+        values[other] = 3700  # some other key crosses below the threshold
+        values[5] = raw5
+        key_push(dev,values)
+        assert list(pinned.feed(drain(dev))) == [expected]
+    pinned.finish()
+    # A pinned sensor outside the layout is an invalid session, never silence.
+    dev.call('scan_stream_last_key',3800,701,64)
+    key_push(dev,[3800]*61)
+    try: list(KeyDecoder(3800,701).feed(drain(dev))); raise AssertionError('out-of-layout sensor accepted')
+    except StreamError as error: assert 'invalid' in str(error)
+    print('PASS compact pinned-sensor sessions, other-key crossings ignored, out-of-layout fail-stop')
 
 
 def main():
@@ -187,7 +204,9 @@ def main():
     # Exercise the actual CDC parser and hardware scan path, not just direct
     # calls to the stream producer. Fragmented commands are covered upstream.
     for bad in ('stream key 0', 'stream key 4097', 'stream key -1',
-                'stream key 3800 4294967296', 'stream key 3800 junk', 'stream key 3800 '):
+                'stream key 3800 4294967296', 'stream key 3800 junk', 'stream key 3800 ',
+                'stream key 3800 1 65', 'stream key 3800 1 254', 'stream key 3800 1 junk',
+                'stream key 3800 1 0 '):
         assert b'ERR stream key' in live.command(bad)
     live.raw[4] = 3799
     data = live.command('stream key 3800 4294967295')
@@ -196,8 +215,21 @@ def main():
     assert values and all(value == 3799 for value in values)
     assert all(not any(r) for r in live.reports)
     live.command('stream off')
+    # Pinned sensor 4 keeps streaming it even while sensor 5 crosses below the
+    # threshold first; an explicit 255 selects like the two-argument form.
+    live.raw[4] = 3900; live.raw[5] = 3799
+    data = live.command('stream key 3800 4294967294 4')
+    live.output.clear(); live.service(30); data += bytes(live.output)
+    values = list(KeyDecoder(3800,4294967294).feed(data))
+    assert values and all(value == 3900 for value in values)
+    live.command('stream off')
+    data = live.command('stream key 3800 4294967293 255')
+    live.output.clear(); live.service(30); data += bytes(live.output)
+    values = list(KeyDecoder(3800,4294967293).feed(data))
+    assert values and all(value == 3799 for value in values)
+    live.command('stream off')
     assert b'SCAN phase=8' in live.command('scan status')
-    print('PASS CDC command/threshold/session parser -> real scan engine -> HKL1; neutral host keys')
+    print('PASS CDC command/threshold/session/sensor parser -> real scan engine -> HKL1; neutral host keys')
 
 
 if __name__ == '__main__': main()
