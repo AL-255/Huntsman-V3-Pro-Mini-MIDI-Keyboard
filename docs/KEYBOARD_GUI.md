@@ -155,8 +155,11 @@ Because the capture is full-rate, the GUI reproduces the firmware's velocity
 window exactly: the triggering point plus the following readbacks, cut before
 the first sample below the shared bottom-out threshold of 2500 (ten maximum),
 total drop divided by the interval count, with the median interval filter only
-when more than five samples were collected. It shows both the raw result and
-its 0–1 normalization, e.g. `velocity 0.0889 [0–1] (400,000 counts/s; assumed
+when more than five samples were collected. A dashed green **fitted line**
+anchored at the trigger point marks the measured velocity as a straight slant
+across the fitted window (counts/s converted back to raw counts per sample at
+the assumed 8 kHz). The status shows both the raw result and its 0–1
+normalization, e.g. `velocity 0.0889 [0–1] (400,000 counts/s; assumed
 8 kHz)`, so each held raw fall can be compared with the velocity value the
 device reports for the same keystroke. The plot holds its points and the
 attributed velocity until the next trigger. Requires the firmware with the

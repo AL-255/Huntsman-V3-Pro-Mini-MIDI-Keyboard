@@ -12,7 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from keyboard_gui_model import Snapshot, ansi_geometry, profile_from_snapshot, validate_pair, validate_profile, note_name, parse_note, MIDI_CONTROLS, CAPTURE_POINTS, KeystrokeCapture
 from keyboard_gui_transport import Connection, find_cdc_device, USB_VENDOR_ID, USB_PRODUCT_ID
-from last_key_stream import press_velocity, velocity_window
+from last_key_stream import press_velocity, velocity_window, VELOCITY_WINDOW
 
 AXIS_W = 34  # left gutter for the raw-value vertical axis of the bottom plot
 
@@ -211,6 +211,18 @@ class App:
             self.graph.create_line(*[c for xy in coords for c in xy],fill='#e9f0f4',width=2)
         for i,(x,y) in enumerate(coords):
             self.graph.create_oval(x-2,y-2,x+2,y+2,fill='#f1a366' if i == 0 else '#e9f0f4',outline='')
+        if cap.velocity is not None and len(cap.points) >= 2:
+            # Fitted velocity line: a straight slant anchored at the trigger
+            # point whose slope is the measured counts/s converted back to raw
+            # counts per sample (assumed 8 kHz), spanning the fitted window.
+            window = velocity_window(cap.points)
+            fitted = len(window) if window is not None else min(VELOCITY_WINDOW,len(cap.points))
+            if fitted >= 2:
+                drop = cap.velocity/8000.0  # raw counts per sample
+                x0,y0 = coords[0]
+                x1 = AXIS_W+(fitted-1)/span*(w-AXIS_W-4)
+                y1 = y0+drop*(fitted-1)/4096*(h-30)
+                self.graph.create_line(x0,y0,x1,y1,fill='#7ee787',width=2,dash=(6,3))
         for i in range(0,CAPTURE_POINTS,5):
             self.graph.create_text(AXIS_W+i/span*(w-AXIS_W-4),h-3,text=str(i),fill='#9cafbc',font=('monospace',8))
         state = f'{"held" if cap.done else "capturing"} • {len(cap.points)}/{CAPTURE_POINTS} points{suffix}'

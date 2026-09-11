@@ -8,7 +8,7 @@ import subprocess
 import time
 import tkinter as tk
 from unittest.mock import patch
-from keyboard_gui import App
+from keyboard_gui import App, AXIS_W
 from keyboard_gui_model import CAPTURE_POINTS
 from test_keyboard_gui import Device
 
@@ -147,6 +147,10 @@ def main():
             pump_until(lambda:app.capture.velocity == 3*50*8000/3,3)
             assert app.capture.points[0] < 3000
             assert '400,000 counts/s' in app.hold_status.get()
+            fitted = [app.graph.coords(item) for item in app.graph.find_all()
+                      if app.graph.type(item) == 'line' and app.graph.itemcget(item,'fill') == '#7ee787']
+            assert len(fitted) == 1 and len(fitted[0]) == 4, fitted
+            assert fitted[0][0] == AXIS_W and fitted[0][3] > fitted[0][1]  # anchored at trigger, downward slant
             device.key_cb = None
             app.hold_button.invoke()
             pump_until(lambda:not app.hold_mode.get() and app.connection.stream_mode == 'gui')
