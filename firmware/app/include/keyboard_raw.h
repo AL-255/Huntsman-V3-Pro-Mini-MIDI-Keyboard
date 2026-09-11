@@ -5,11 +5,16 @@
 #define RAW_KEY_COUNT MT_KEY_CAPACITY
 #define RAW_DEFAULT_PRESS 3500u
 #define RAW_DEFAULT_RELEASE 3600u
+/* Velocity window: the triggering sample plus up to nine more. A sample
+ * below the bottom-out threshold closes the window early (it is excluded),
+ * so very fast presses fit on as few as two readbacks. */
+#define RAW_BOTTOM_OUT 2500u
+#define RAW_VELOCITY_WINDOW 10u
 typedef struct {
     float value;              /* clamp(raw counts/s / 4500000, 0, 1) */
     uint32_t captures;         /* completed fits, wrapping uint32 */
-    uint16_t window[5];        /* rolling samples, never shared between keys */
-    uint8_t write, pending;    /* next slot; trigger ages 0..4 as bits */
+    uint16_t window[RAW_VELOCITY_WINDOW]; /* current fit samples, per key only */
+    uint8_t count, pending;    /* samples collected; 1 while a fit is in flight */
     bool ready, valid;         /* release-observed arming; result available */
 } keyboard_velocity_t;
 typedef struct {

@@ -64,10 +64,12 @@ SECTIONS
         __bss_end__ = .;
     } > SRAMX
 
+    /* The application performs no heap allocation (see ARCHITECTURE.md);
+     * a small reservation guards accidental malloc against stack smash. */
     .heap (NOLOAD) : ALIGN(8)
     {
         __HeapBase = .;
-        . += 0x400;
+        . += 0x100;
         __HeapLimit = .;
     } > SRAMX
 

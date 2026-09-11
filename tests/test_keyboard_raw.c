@@ -25,22 +25,35 @@ static int compare_interval(const void *a, const void *b)
     return (x > y) - (x < y);
 }
 
-static double filtered_oracle(const uint16_t *points)
+static double window_oracle(const uint16_t *window, unsigned count)
 {
-    int intervals[4], ordered[4];
-    for (unsigned i=0; i<4; ++i) ordered[i]=intervals[i]=(int)points[i]-points[i+1];
-    qsort(ordered,4,sizeof(*ordered),compare_interval);
-    const double median=(ordered[1]+ordered[2])/2.0;
-    unsigned discard=0;
-    double largest=-1;
-    for (unsigned i=0; i<4; ++i) {
-        double distance=intervals[i]-median;
-        if (distance<0) distance=-distance;
-        if (distance>largest) { largest=distance; discard=i; }
+    /* Mirror of the MCU fit: speed = sum of kept intervals / kept count at
+     * the declared rate. The median interval filter (discard the interval
+     * furthest from the median, earliest wins ties) runs only when more
+     * than five samples were collected; shorter windows keep every interval,
+     * so their speed is exactly d(x)/count. */
+    int intervals[9], ordered[9];
+    int sum = 0;
+    unsigned kept = count - 1;
+    for (unsigned i = 0; i < kept; ++i) {
+        intervals[i] = (int)window[i] - (int)window[i+1];
+        ordered[i] = intervals[i];
+        sum += intervals[i];
     }
-    double sum=0;
-    for (unsigned i=0; i<4; ++i) if (i!=discard) sum+=intervals[i];
-    return sum/3.0*8000.0;
+    if (count > 5) {
+        qsort(ordered, kept, sizeof(*ordered), compare_interval);
+        const int twice_median = ordered[(kept-1)/2] + ordered[kept/2];
+        unsigned discard = 0;
+        int largest = -1;
+        for (unsigned i = 0; i < kept; ++i) {
+            int distance = 2*intervals[i] - twice_median;
+            if (distance < 0) distance = -distance;
+            if (distance > largest) { largest = distance; discard = i; }
+        }
+        sum -= intervals[discard];
+        --kept;
+    }
+    return (double)sum * 8000.0 / (double)kept;
 }
 
 static void check_velocity(float actual, double raw_velocity)
@@ -55,8 +68,11 @@ static void check_velocity(float actual, double raw_velocity)
 static void velocity_history_oracle(void)
 {
     keyboard_raw_t keys;
-    uint16_t history[65][256], values[65];
-    bool triggers[65][256] = {{false}}, down[65] = {false};
+    uint16_t values[65];
+    bool down[65] = {false};
+    bool ready[65] = {false}, pending[65] = {false};
+    uint16_t window[65][10];
+    unsigned count[65] = {0};
     uint32_t completed[65] = {0}, random = 42;
     double last[65] = {0};
     keyboard_raw_init(&keys);
@@ -67,26 +83,39 @@ static void velocity_history_oracle(void)
     for (unsigned frame = 0; frame < 256; ++frame) {
         for (unsigned i = 0; i < 65; ++i) {
             random = random*1664525u + 1013904223u;
-            values[i] = history[i][frame] = frame ? 2800 + random%701 : 3900;
+            values[i] = 2000 + random%1601; /* 2000..3600: crosses press, release and bottom-out */
             const bool next = down[i] ? values[i] <= 3300 : values[i] < 3000;
-            triggers[i][frame] = next && !down[i];
-            down[i] = next;
-            if (frame >= 5 && triggers[i][frame-5]) {
-                const uint16_t *p = &history[i][frame-4];
-                last[i] = filtered_oracle(p);
-                ++completed[i];
+            const bool trigger = next && !down[i];
+            if (values[i] > 3300) ready[i] = true;
+            if (trigger && ready[i]) {
+                ready[i] = false;
+                pending[i] = true;
+                count[i] = 1u;
+                window[i][0] = values[i];
             }
+            else if (pending[i]) {
+                if (values[i] < 2500) { /* bottom-out closes without this sample */
+                    if (count[i] >= 2u) { last[i] = window_oracle(window[i], count[i]); ++completed[i]; }
+                    pending[i] = false; count[i] = 0u;
+                }
+                else {
+                    window[i][count[i]++] = values[i];
+                    if (count[i] >= 10u) {
+                        last[i] = window_oracle(window[i], count[i]);
+                        ++completed[i];
+                        pending[i] = false; count[i] = 0u;
+                    }
+                }
+            }
+            down[i] = next;
         }
         keyboard_raw_frame(&keys, values, 65, 3, true);
         for (unsigned i = 0; i < 65; ++i) {
             assert(keys.velocity[i].captures == completed[i]);
             assert(keys.velocity[i].valid == (completed[i] != 0));
             if (completed[i]) check_velocity(keys.velocity[i].value, last[i]);
-            unsigned mask = 0;
-            for (unsigned age = 0; age < 5 && age <= frame; ++age)
-                if (triggers[i][frame-age]) mask |= 1u << age;
-            assert(keys.velocity[i].pending == mask);
-            assert(keys.velocity[i].ready == !down[i]);
+            assert(keys.velocity[i].pending == pending[i]);
+            assert(keys.velocity[i].ready == ready[i]);
         }
     }
     puts("PASS 16640 randomized per-key frames against full-history fit/trigger oracle");
@@ -101,17 +130,20 @@ static void velocity_tests(void)
     for (unsigned i = 0; i < 65; ++i) values[i] = 3900;
     keyboard_raw_frame(&keys, values, 65, 3, true);
     for (unsigned i = 0; i < 65; ++i) values[i] = 3500;
-    keyboard_raw_frame(&keys, values, 65, 3, true);
-    for (unsigned sample = 1; sample <= 5; ++sample) {
+    keyboard_raw_frame(&keys, values, 65, 3, true); /* trigger: window = [3500] */
+    for (unsigned i = 0; i < 65; ++i) assert(keys.velocity[i].pending);
+    for (unsigned sample = 1; sample <= 9; ++sample) {
         for (unsigned i = 0; i < 65; ++i) values[i] = 3500 - (i+1)*sample;
         keyboard_raw_frame(&keys, values, 65, 3, true);
         for (unsigned i = 0; i < 65; ++i) {
-            assert(keys.velocity[i].captures == (sample == 5));
-            if (sample == 5) check_velocity(keys.velocity[i].value, (int32_t)(8000*(i+1)));
+            assert(keys.velocity[i].captures == (sample == 9)); /* ten samples close the window */
+            if (sample == 9) {
+                assert(keys.velocity[i].valid && !keys.velocity[i].pending);
+                /* nine equal intervals of (i+1); the filter drops one, mean unchanged */
+                check_velocity(keys.velocity[i].value, (int32_t)(8000*(i+1)));
+            }
         }
     }
-    for (unsigned n = 0; n < 10; ++n) keyboard_raw_frame(&keys, values, 65, 3, true);
-    for (unsigned i = 0; i < 65; ++i) assert(keys.velocity[i].captures == 1);
     assert(!keys.armed); /* velocity is independent of HID enable */
     values[0] = 3700; keyboard_raw_frame(&keys, values, 65, 3, true);
     assert(!keys.velocity[0].ready);
@@ -120,20 +152,34 @@ static void velocity_tests(void)
     values[0] = 3600; keyboard_raw_frame(&keys, values, 65, 3, true);
     assert(!keys.velocity[0].pending);
 
-    /* Three overlapping press windows: release does not truncate the prior
-     * five-point fit, and the next key press is never lost or mixed by key. */
+    /* Bottom-out cut: a very fast press fits on four samples (m=4, no
+     * median filter), and the below-2500 sample that closes it is excluded. */
+    values[0] = 3500; keyboard_raw_frame(&keys, values, 65, 3, true);
+    values[0] = 3200; keyboard_raw_frame(&keys, values, 65, 3, true);
+    values[0] = 2900; keyboard_raw_frame(&keys, values, 65, 3, true);
+    values[0] = 2600; keyboard_raw_frame(&keys, values, 65, 3, true);
+    assert(keys.velocity[0].pending && keys.velocity[0].captures == 1);
+    values[0] = 2400; keyboard_raw_frame(&keys, values, 65, 3, true);
+    assert(!keys.velocity[0].pending && keys.velocity[0].captures == 2);
+    check_velocity(keys.velocity[0].value, 900.0/3.0*8000.0);
+    assert(keys.velocity[1].captures == 1); /* other keys still collecting their own windows */
+    for (unsigned n = 0; n < 8; ++n) keyboard_raw_frame(&keys, values, 65, 3, true);
+    for (unsigned i = 1; i < 65; ++i) assert(keys.velocity[i].captures == 1);
+
+    /* Rapid retriggers: a new press owns the window, discarding unfinished
+     * collections; the completed fit uses only the last press's readbacks. */
+    values[0] = 3900; keyboard_raw_frame(&keys, values, 65, 3, true); /* release rearms */
     const uint16_t rapid[] = {3500,3800,3490,3810,3480,3400,3390,3380,3370,3360};
+    const uint16_t final_window[10] = {3480,3400,3390,3380,3370,3360,3360,3360,3360,3360};
     for (unsigned n = 0; n < sizeof(rapid)/sizeof(rapid[0]); ++n) {
         values[0] = rapid[n]; keyboard_raw_frame(&keys, values, 65, 3, true);
-        if (n == 5 || n == 7 || n == 9) {
-            const uint16_t *p = &rapid[n-4];
-            const double expected = filtered_oracle(p);
-            check_velocity(keys.velocity[0].value, expected);
-            assert(keys.velocity[0].captures == 2+(n-5)/2);
-        }
-        assert(keys.velocity[1].captures == 1);
+        assert(keys.velocity[0].pending);
     }
-    assert(keys.velocity[0].captures == 4 && keys.velocity[0].valid);
+    for (unsigned n = 0; n < 3; ++n) keyboard_raw_frame(&keys, values, 65, 3, true);
+    values[0] = 3360; keyboard_raw_frame(&keys, values, 65, 3, true); /* tenth sample */
+    assert(keys.velocity[0].captures == 3 && keys.velocity[0].valid);
+    check_velocity(keys.velocity[0].value, window_oracle(final_window, 10));
+    assert(keys.velocity[1].captures == 1);
     const uint32_t revision = keys.revision;
     assert(!keyboard_raw_set_all(&keys, 3500, 3500));
     assert(keys.revision == revision && keys.velocity[0].valid);
@@ -150,59 +196,98 @@ static void velocity_tests(void)
     keyboard_raw_frame(&keys, values, 65, 3, false);
     assert(!keys.velocity[0].pending && !keys.velocity[0].valid);
     for (unsigned i = 0; i < 10; ++i) keyboard_raw_frame(&keys, values, 65, 3, true);
-    assert(keys.velocity[0].captures == 4 && !keys.velocity[0].valid);
-    puts("PASS 65 simultaneous fits, independent/release arming, overlapping windows, atomic all-key edits, invalid cancellation");
+    assert(keys.velocity[0].captures == 3 && !keys.velocity[0].valid);
+    puts("PASS 65 simultaneous fits, bottom-out window cut, release arming, retrigger ownership, atomic all-key edits, invalid cancellation");
 }
 
 static void velocity_clamp_tests(void)
 {
-    const uint16_t points[][5] = {
-        {2000,2100,2200,2300,2400}, /* negative */
-        {3000,3000,3000,3000,3000}, /* zero */
-        {3000,2999,2998,2996,2976}, /* fractional 10666.666... counts/s */
-        {3500,2938,2376,1813,813},  /* 4498666.666... (below clamp) */
-        {3500,2937,2374,1812,812},  /* 4501333.333... (above clamp) */
-        {4096,3096,2096,1096,96}    /* well above maximum */
+    /* Trigger, window samples, and whether a below-bottom-out sample closes
+     * the window early. All window values stay above the bottom-out 2500. */
+    struct {
+        uint16_t points[9];
+        unsigned count;
+        bool bottom;
+        double raw;
+    } fixtures[] = {
+        {{3510,3520,3530,3540,3550,3560,3570,3580,3590}, 9, false, -80000},  /* rising -> 0 */
+        {{3500,3500,3500,3500,3500,3500,3500,3500,3500}, 9, false, 0},       /* flat */
+        {{3490,3480,3470,3460,3450,3440,3430,3420,3410}, 9, false, 80000},   /* filtered slow fall */
+        {{3200,2900,2601}, 3, true, 899.0/3.0*8000},  /* four samples, no filter, fractional */
+        {{2938}, 1, true, 562.0*8000},                /* just below 4500000 */
+        {{2937}, 1, true, 563.0*8000},                /* just above 4500000 */
+        {{2500}, 1, true, 1000.0*8000},               /* far above 4500000 */
+        {{2900,2890,2880,2870,2860,2850,2840,2830,2820}, 9, false, 80000},   /* ten-sample filtered fall */
     };
-    for (unsigned k = 0; k < sizeof(points)/sizeof(points[0]); ++k) {
+    for (unsigned k = 0; k < sizeof(fixtures)/sizeof(fixtures[0]); ++k) {
         velocity_init(&s);
         for (unsigned i = 0; i < 61; ++i) raw[i] = 3900;
-        frame(); raw[32] = 3500; frame();
-        for (unsigned i = 0; i < 5; ++i) { raw[32] = points[k][i]; frame(); }
-        const uint16_t *p = points[k];
-        const double expected = filtered_oracle(p);
+        frame(); raw[32] = 3500; frame(); /* trigger */
+        for (unsigned i = 0; i < fixtures[k].count; ++i) { raw[32] = fixtures[k].points[i]; frame(); }
+        if (fixtures[k].bottom) { raw[32] = 2400; frame(); } /* closes without this sample */
         assert(s.velocity[32].valid && s.velocity[32].captures == 1);
-        check_velocity(s.velocity[32].value, expected);
+        check_velocity(s.velocity[32].value, fixtures[k].raw);
         if (k < 2) assert(s.velocity[32].value == 0.0f);
-        if (k >= 4) assert(s.velocity[32].value == 1.0f);
+        if (k == 5 || k == 6) assert(s.velocity[32].value == 1.0f);
     }
-    puts("PASS normalized float: negative/zero, fractional positive, below/above 4500000");
+    puts("PASS normalized float: negative/zero, fractional, below/above 4500000, bottom-out windows");
 }
 
 static void pop_filter_tests(void)
 {
-    for (unsigned outlier=0;outlier<4;++outlier) {
-        for (int spike=-1000;spike<=1000;spike+=2000) {
+    /* Long windows (ten samples) filter one glitch interval at every
+     * position, leaving the clean 10-counts/sample slope. */
+    for (unsigned outlier=0;outlier<9;++outlier) {
+        for (int spike=-500;spike<=500;spike+=1000) {
             velocity_init(&s);
             for(unsigned i=0;i<61;++i) raw[i]=3900;
             frame(); raw[32]=3500; frame();
-            int value=2000;
-            for (unsigned j=0;j<5;++j) {
+            int value=3500;
+            for (unsigned j=0;j<9;++j) {
+                value -= j==outlier ? spike : 10;
                 raw[32]=(uint16_t)value; frame();
-                if(j<4) value-=j==outlier ? spike : 10;
             }
             check_velocity(s.velocity[32].value,80000);
         }
     }
-    const uint16_t tie[2][5]={{3000,3000,2990,2970,2940},{3000,2970,2950,2940,2940}};
-    for(unsigned k=0;k<2;++k) {
+    /* Short windows (five samples, four intervals) skip the filter entirely:
+     * the glitch stays in the mean, which is exactly d(x)/count. The spikes
+     * stay below release so the closing sample cannot retrigger the window. */
+    for (int spike=-100;spike<=100;spike+=200) {
         velocity_init(&s);
         for(unsigned i=0;i<61;++i) raw[i]=3900;
         frame(); raw[32]=3500; frame();
-        for(unsigned j=0;j<5;++j) {raw[32]=tie[k][j]; frame();}
-        check_velocity(s.velocity[32].value,k ? 80000 : 160000);
+        int value=3500;
+        for (unsigned j=0;j<4;++j) {
+            value -= j==2 ? spike : 10;
+            raw[32]=(uint16_t)value; frame();
+        }
+        raw[32]=2400; frame(); /* bottom-out closes the five-sample window */
+        check_velocity(s.velocity[32].value,(30.0+spike)/4.0*8000.0);
     }
-    puts("PASS pop filter: high/low outlier at each of four intervals; earliest tie wins");
+    /* Earliest interval wins equal-distance ties in the filtered window. */
+    const uint16_t ties[2][10] = {
+        {3500,3500,3490,3480,3470,3460,3450,3440,3430,3410}, /* 0,10*7,20 -> discard 0 -> 90000 */
+        {3500,3480,3470,3460,3450,3440,3430,3420,3410,3410}, /* 20,10*7,0 -> discard 20 -> 70000 */
+    };
+    for (unsigned k=0;k<2;++k) {
+        velocity_init(&s);
+        for(unsigned i=0;i<61;++i) raw[i]=3900;
+        frame(); raw[32]=3500; frame();
+        for (unsigned j=0;j<9;++j) { raw[32]=ties[k][j+1]; frame(); }
+        check_velocity(s.velocity[32].value,k ? 70000 : 90000);
+    }
+    /* Six samples: five intervals, filter enabled; exact kept mean. */
+    {
+        velocity_init(&s);
+        for(unsigned i=0;i<61;++i) raw[i]=3900;
+        frame(); raw[32]=3500; frame();
+        const uint16_t six[] = {3490,3480,3470,3460,3450};
+        for (unsigned j=0;j<5;++j) { raw[32]=six[j]; frame(); }
+        raw[32]=2400; frame(); /* bottom-out closes the six-sample window */
+        check_velocity(s.velocity[32].value,80000);
+    }
+    puts("PASS pop filter: filtered ten-sample windows at every glitch position; five-sample windows unfiltered; earliest tie wins");
 }
 
 int main(void)

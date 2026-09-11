@@ -20,7 +20,7 @@ SCRIPT = str(Path(__file__).with_name('decode_scan_stream.py'))
 
 
 def velocity_line(value):
-    return f'Velocity: {value:+.3f} raw counts/s (4 intervals, discard 1 outlier, average 3; assumed 8000 Hz; positive=press)\n'.encode()
+    return f'Velocity: {value:+.3f} raw counts/s (up to 10 readbacks incl. trigger, cut before bottom-out 2500; median interval filter only above five samples; assumed 8000 Hz; positive=press)\n'.encode()
 
 
 def packet(seq, raw=3799, key=3, flags=None, threshold=3800, session=123):
@@ -45,22 +45,40 @@ class LastKeyTests(unittest.TestCase):
         self.assertEqual(result.stderr, b'')
 
     def test_velocity_fit_sign_units_noise_and_window(self):
-        self.assertEqual(press_velocity([3500,3490,3480,3470,3460]),80000)
+        self.assertEqual(press_velocity([3500,3490,3480,3470,3460]),80000)      # five samples: no filter
         self.assertEqual(press_velocity([3460,3470,3480,3490,3500]),-80000)
         self.assertEqual(press_velocity([3500]*5),0)
-        self.assertAlmostEqual(press_velocity([3500,3403,3298,3204,3099]),307*8000/3)
-        with self.assertRaises(ValueError): press_velocity([1,2,3,4])
+        self.assertAlmostEqual(press_velocity([3500,3403,3298,3204,3099]),401/4*8000)  # d(x)/count, fractional
+        self.assertAlmostEqual(press_velocity([3500,3490,3480,3470,3460,3450,3440,3430,3420,3410]),80000)  # filtered
+        self.assertEqual(press_velocity([3500,3400]),100*8000)                  # two-sample bottom-out window
+        with self.assertRaises(ValueError): press_velocity([1])
+        with self.assertRaises(ValueError): press_velocity([])
+        with self.assertRaises(ValueError): press_velocity([1000]*11)
+        # velocity_window: cut before the bottom-out sample, closed state only
+        from last_key_stream import velocity_window, BOTTOM_OUT
+        self.assertIsNone(velocity_window([3500,3400,3300]))
+        self.assertEqual(velocity_window([3500,3400,3300,3200,2400]),[3500,3400,3300,3200])
+        self.assertEqual(velocity_window([3500]+[3400]*9),[3500]+[3400]*9)
+        self.assertEqual(velocity_window([3500]+[3400]*20),[3500]+[3400]*9)
+        self.assertEqual(velocity_window([3500,2400]),[3500])  # bottom-out on the first follow-up
+        self.assertIsNone(velocity_window([3500]))
 
     def test_velocity_pop_filter(self):
-        for index in range(4):
-            for spike in (-1000,1000):
-                intervals=[10]*4; intervals[index]=spike
-                samples=[2000]
+        # Ten-sample windows discard one glitch interval at every position.
+        for index in range(9):
+            for spike in (-500,500):
+                intervals=[10]*9; intervals[index]=spike
+                samples=[3500]
                 for delta in intervals: samples.append(samples[-1]-delta)
                 self.assertEqual(press_velocity(samples),80000)
-        self.assertEqual(press_velocity([3000,3000,2990,2970,2940]),160000)
-        self.assertEqual(press_velocity([3000,2970,2950,2940,2940]),80000)
-        self.assertAlmostEqual(press_velocity([3000,2999,2998,2996,2976]),32000/3)
+        # Five-sample windows (four intervals) skip the filter: d(x)/count.
+        for spike in (-500,500):
+            intervals=[10]*4; intervals[2]=spike
+            samples=[3500]
+            for delta in intervals: samples.append(samples[-1]-delta)
+            self.assertAlmostEqual(press_velocity(samples),(30+spike)/4*8000)
+        self.assertEqual(press_velocity([3500,3500,3490,3480,3470,3460,3450,3440,3430,3410]),90000)   # earliest tie wins
+        self.assertEqual(press_velocity([3500,3480,3470,3460,3450,3440,3430,3420,3410,3410]),70000)
         raw = [3500,3490,3480,3470,3460] + [1000]*15
         data = packet(0,3599,key=32) + b''.join(packet(i+1,v,key=32) for i,v in enumerate(raw))
         result = self.cli(data)
@@ -126,7 +144,7 @@ class LastKeyTests(unittest.TestCase):
         lines = capture.feed(32,3500)
         self.assertTrue(lines[-1].startswith('Key: A'))
         self.assertEqual(capture.captured,0)
-        self.assertEqual(capture.first_five,[])
+        self.assertEqual(capture.velocity_samples,[3500])  # triggering sample is window x0
         for i in range(20): lines = capture.feed(32,3400)
         self.assertEqual(lines[-1].encode(),velocity_line(0))
 

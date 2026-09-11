@@ -99,8 +99,8 @@ static void performance(void)
     samples[SYN_SPACE]=3601; frame(); drain(); assert(logged==2 && !packets[1][3]);
     lighting_travel_frame(SYN_PROFILE,samples,lo,hi,true,rgb); keyboard_midi_lights(&midi,rgb,now);
     assert(rgb[SYN_SPACE*3]==0 && rgb[SYN_SPACE*3+1]==0 && rgb[SYN_SPACE*3+2]==255);
-    samples[SYN_TAB]=3499; frame();
-    for(unsigned i=0;i<5;++i) { samples[SYN_TAB]=3400-i*100; frame(); }
+    samples[SYN_TAB]=3499; frame(); /* trigger: window starts at this readback */
+    for(unsigned i=0;i<9;++i) { samples[SYN_TAB]=3400-i*100; frame(); }
     assert(fabsf(raw.velocity[SYN_TAB].value-200000.0f/4500000.0f)<0.000001f);
     drain(); assert(midi.refs[72]==1);
     samples[SYN_TAB]=3900; frame(); drain(); assert(!midi.refs[72]);

@@ -23,66 +23,70 @@ The GUI displays sharp note names and still accepts flat spellings as input.
 It reads mapping state from the device. Importing a host profile replaces
 defaults with that file's stored mappings.
 
-## Four-interval estimator
+## Bottom-out velocity window
 
-Take five actual post-trigger ADC readbacks y1…y5.
-The triggering sample is excluded. Form four signed differences:
+Every key collects its press velocity from a window of consecutive ADC
+readbacks that starts at the **triggering sample** (the first below the key's
+press threshold) and grows until one of:
 
-```
-d0 = y1 - y2
-d1 = y2 - y3
-d2 = y3 - y4
-d3 = y4 - y5
-```
+- ten readbacks are collected, or
+- a readback crosses below the shared **bottom-out threshold** of 2500; that
+  sample closes the window and is excluded, so very fast presses fit on as
+  few as two readbacks.
 
 Decreasing ADC values indicate increasing press depth, so positive differences
 mean positive press velocity. Intervals use `1 / layout.sample_hz` seconds;
-Huntsman declares 1/8000 second.
-Because their durations are equal, filtering raw differences is equivalent to
-filtering their counts/second rates.
+Huntsman declares 1/8000 second. Because their durations are equal, filtering
+raw differences is equivalent to filtering their counts/second rates.
 
-Sort the four differences, define their median as the midpoint of the two
-middle values, and discard exactly one interval with the largest absolute
-distance from that median. In an exact tie, discard the earliest interval in
-sample order. This deterministic rule applies even when no strong outlier
-exists; it does not introduce an extra noise threshold or discard two values.
+The speed is the total drop divided by the interval count — `d(x)/count` —
+multiplied by the declared scan rate. Windows longer than five samples
+additionally apply the median interval filter: sort the differences, define
+their median as the midpoint of the two middle values, and discard exactly one
+interval with the largest absolute distance from that median (earliest wins
+ties). Shorter windows skip the filter entirely, so their estimate is exactly
+the unfiltered mean. This deterministic rule applies even when no strong
+outlier exists; it does not introduce an extra noise threshold or discard two
+values.
 
-Average the remaining three differences, multiply by the declared scan rate, then clamp/normalize
-to 0…1 using the existing maximum of 4,500,000 counts/s. Fractions are preserved;
-there is no integer division before normalization. The MCU supplies this float
-to the GUI and rounds it to MIDI attack velocity 1…127. Signed nonpositive
-estimates normalize to zero, but Note On still uses at least velocity 1 because
-zero-velocity Note On means Note Off. Aftertouch calculation is unchanged.
+The estimate is then clamp/normalized to 0…1 using the existing maximum of
+4,500,000 counts/s. Fractions are preserved; there is no integer division
+before normalization. The MCU supplies this float to the GUI and rounds it to
+MIDI attack velocity 1…127. Signed nonpositive estimates normalize to zero,
+but Note On still uses at least velocity 1 because zero-velocity Note On means
+Note Off. Aftertouch calculation is unchanged.
 
 Examples at Huntsman's declared 8000 Hz (intervals are signed canonical-count differences):
 
-| Four intervals | Discard | Mean of other three | Counts/s |
-| --- | ---: | ---: | ---: |
-| 100, 1000, 100, 100 | 1000 | 100 | 800000 |
-| 10, −1000, 10, 10 | −1000 | 10 | 80000 |
-| 1, 1, 2, 20 | 20 | 4/3 | 10666.666… |
-| 0, 10, 20, 30 | first interval, 0 | 20 | 160000 |
-| 30, 20, 10, 0 | first interval, 30 | 10 | 80000 |
+| Window | Intervals | Discard | Mean | Counts/s |
+| --- | --- | ---: | ---: | ---: |
+| 10 samples, 100, 1000, 100, 100, … | 1000 glitch among nine | 1000 | 100 | 800000 |
+| 10 samples, 10, −500, 10, … | −500 glitch among nine | −500 | 10 | 80000 |
+| 4 samples, 300, 300, 299 | — (no filter) | — | 899/3 | 2397333.333… |
+| 10 samples, 0, 10×7, 20 | tied 0 vs 20 | first interval, 0 | 90/8 | 90000 |
+| 10 samples, 20, 10×7, 0 | tied 20 vs 0 | first interval, 20 | 70/8 | 70000 |
 
-The last two examples expose the explicit tie policy rather than claiming
-there is a uniquely identifiable outlier in a symmetric set.
-
-This is an **interval-outlier** filter. One corrupted interior ADC sample can
-perturb two adjacent intervals; removing exactly one interval cannot guarantee
-repair of arbitrary sample spikes. Invalid samples outside the accepted ADC
-range still invalidate the raw frame and cancel pending strikes. No extra
-latency, FIFO, scan skipping or sharing of velocity histories was introduced.
-Each key's overlapping pending windows and release-threshold rearming remain
-independent. The existing 8 kHz assumption is not a measured scan-rate claim.
+This is an **interval-outlier** filter, enabled only above five samples. One
+corrupted interior ADC sample can perturb two adjacent intervals; removing
+exactly one interval cannot guarantee repair of arbitrary sample spikes.
+Invalid samples outside the accepted ADC range still invalidate the raw frame
+and cancel pending strikes. A newer press always owns the window: an
+unfinished collection is discarded when the same key triggers again. Each
+key's window, release-threshold rearming and pending state remain independent.
+The existing 8 kHz assumption is not a measured scan-rate claim.
 
 ## Host capture consistency
 
-`decode_scan_stream.py --last-key` uses the same interval filter in the host
-capture helper. It prints signed raw counts/s to three decimals, rather than
-normalizing or rounding away the fractional mean. All twenty captured readbacks
-are still printed; filtering changes the velocity estimate, not the data stream.
+`decode_scan_stream.py --last-key` collects the same window in the host
+capture helper (triggering readback plus following values, cut before the
+first below-2500 readback, ten maximum) and applies the same median-interval
+gate. It prints signed raw counts/s to three decimals, rather than normalizing
+or rounding away the fractional mean. All captured readbacks are still
+printed; filtering changes the velocity estimate, not the data stream.
 The host helper is fixed at 8000 Hz; do not use its velocity result as an oracle
-for a differently timed board without adapting it. The GUI continues to display the float received from firmware without host-side
+for a differently timed board without adapting it. The configuration GUI
+reproduces the same window math for its held keystroke captures; ordinary
+telemetry still displays the float received from firmware without host-side
 filtering. Telemetry uses HKG6.
 
 ## Octave LEDs

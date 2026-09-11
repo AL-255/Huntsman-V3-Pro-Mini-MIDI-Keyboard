@@ -218,33 +218,53 @@ void keyboard_midi_frame(keyboard_midi_t *s, keyboard_raw_t *raw,
                     s->active[i] = MIDI_UNMAPPED;
                 }
             }
-            /* Phase slot completes exactly five hardware frames after trigger.
-             * Short taps retain their delayed On+Off; overlapping fits use
-             * independent slots and never borrow another key's velocity. */
-            uint8_t note = s->pending[i][s->phase];
-            if (note != MIDI_UNMAPPED) {
+            /* Buffered notes fire when this key's velocity fit completes. The
+             * fit window (up to ten readbacks, cut at bottom-out) closes later
+             * than the old fixed five-frame slot rotation, so a Note On always
+             * carries the completed estimate of its own press. Taps whose
+             * windows were superseded by a newer press fire together with the
+             * completed fit's velocity, keeping Note On/Off pairing. A window
+             * that closes without a fit (the triggering sample was already
+             * below bottom-out) still releases its notes with the last value,
+             * so no press can strand a Note On. */
+            bool any_pending = false;
+            for (unsigned slot = 0; slot < 5u; ++slot)
+                if (s->pending[i][slot] != MIDI_UNMAPPED) { any_pending = true; break; }
+            if (any_pending && !raw->velocity[i].pending) {
+                /* The fit window just closed (a completed fit, or a
+                 * triggering sample already below bottom-out): the buffered
+                 * notes fire with the current velocity value. */
                 unsigned velocity = (unsigned)(raw->velocity[i].value * 127.0f + 0.5f);
                 if (!velocity) velocity = 1; /* Note On zero means Note Off */
-                if (!s->refs[note]++ && !enqueue(s, 0x90, note, velocity)) goto overflow;
-                s->sent_pressure[note] = 255;
-                if (s->released[i] & (1u << s->phase)) {
-                    if (!note_off(s, note)) goto overflow;
-                } else s->active[i] = note;
-                if (s->current[i] == s->phase) s->current[i] = 255;
-                s->pending[i][s->phase] = MIDI_UNMAPPED;
+                for (unsigned slot = 0; slot < 5u; ++slot) {
+                    const uint8_t note = s->pending[i][slot];
+                    if (note == MIDI_UNMAPPED) continue;
+                    if (!s->refs[note]++ && !enqueue(s, 0x90, note, velocity)) goto overflow;
+                    s->sent_pressure[note] = 255;
+                    if (s->released[i] & (1u << slot)) {
+                        if (!note_off(s, note)) goto overflow;
+                    } else s->active[i] = note;
+                    if (s->current[i] == slot) s->current[i] = 255;
+                    s->pending[i][slot] = MIDI_UNMAPPED;
+                }
             }
             if (!fn && raw->down[i] && !s->previous[i] && note_enabled(s,i)) {
                 const int shifted = (int)s->mapping[i] + (int)s->octave * 12;
                 /* Out-of-range notes are muted, never wrapped or clamped. */
                 if (shifted >= 0 && shifted <= 127) {
-                    s->pending[i][s->phase] = (uint8_t)shifted;
-                    s->released[i] &= ~(1u << s->phase);
-                    s->current[i] = s->phase;
+                    unsigned slot = 5u;
+                    for (unsigned candidate = 0; candidate < 5u; ++candidate)
+                        if (s->pending[i][candidate] == MIDI_UNMAPPED) { slot = candidate; break; }
+                    if (slot < 5u) { /* windows overlap at most a few taps */
+                        s->pending[i][slot] = (uint8_t)shifted;
+                        s->released[i] &= ~(1u << slot);
+                        s->current[i] = slot;
+                    }
                 }
             }
             if (s->active[i] != MIDI_UNMAPPED) {
                 const uint8_t pressure = ((unsigned)lighting_travel_pwm(raw->raw[i], lower[i], upper[i]) * 127u + 127u) / 255u;
-                note = s->active[i];
+                const uint8_t note = s->active[i];
                 if (pressure > s->pressure[note]) s->pressure[note] = pressure;
             }
         }

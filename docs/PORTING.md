@@ -231,8 +231,8 @@ spanning at least 512. These are shared behavior, not inferred properties of
 your sensor. Validate that the board's normalization and fallback bounds make
 real travel usable under these rules. Calibration does not retune thresholds.
 
-Set `sample_hz` to the actual intended frame rate. The five post-trigger
-samples span four intervals, so a different frame rate changes the velocity
+Set `sample_hz` to the actual intended frame rate. Post-trigger samples span
+their window's intervals, so a different frame rate changes the velocity
 multiplier. Nominal configuration is not a measurement of hardware timing:
 measure cadence, dropped frames and worst-case service time under polyphony.
 Provide milliseconds separately as a monotonic uint32 timer; wrapping is

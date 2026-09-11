@@ -259,7 +259,7 @@ See [clean builds, dependencies and testing](docs/BUILDING.md).
 ## Scan/debug tools
 
 ```sh
-# Twenty post-trigger samples, five-point velocity estimate, then exit:
+# Twenty post-trigger samples, bottom-out velocity estimate, then exit:
 python3 -u tools/decode_scan_stream.py /dev/ttyACM0 --last-key --threshold 3600
 # Rearm above the threshold and capture again until Ctrl+C:
 python3 -u tools/decode_scan_stream.py /dev/ttyACM0 --last-key --threshold 3600 --repeat
@@ -287,9 +287,11 @@ Selecting a CDC display does not select keyboard/MIDI performance mode.
 - [USB integration and safety](docs/USB_DESIGN.md)
 - [SDK source origins and licenses](third_party/ORIGINS.md)
 
-Velocity forms four signed differences from five post-trigger samples,
-discards the interval furthest from their median, and averages the other three
-before firmware-side 0…1 normalization. Ties discard the earliest interval.
+Velocity collects a window from the triggering sample onward — ten readbacks
+maximum, closed early below the shared bottom-out threshold of 2500 — and
+divides the total drop by the interval count before firmware-side 0…1
+normalization. Windows longer than five samples discard the interval furthest
+from their median first; ties discard the earliest interval.
 The host capture tool uses the same estimator and prints fractional counts/s.
 See [filter details and limitations](docs/MIDI_FILTER.md).
 

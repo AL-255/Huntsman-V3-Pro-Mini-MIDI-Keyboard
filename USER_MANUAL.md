@@ -499,9 +499,12 @@ Space continues to type a normal space.
 
 ### What the velocity number means
 
-Each key independently uses its first five samples **after** crossing the
-press threshold. The firmware makes four interval measurements, discards
-the interval furthest from their median, and averages the remaining three.
+Each key independently collects a velocity window from the first sample
+**below** its press threshold. The window holds up to ten readbacks and closes
+early when the key crosses the shared bottom-out threshold of 2500 (that
+sample is excluded), so very fast presses fit on only a few samples. The
+firmware divides the total drop by the number of intervals; windows longer
+than five samples discard the interval furthest from their median first.
 It scales the result to a float from **0 to 1**, with 4,500,000 counts/s as
 the maximum. A fresh strike is armed after the key exceeds its release
 threshold. The GUI displays the last completed strike's value, not current
@@ -509,8 +512,9 @@ pressure; a held key need not show a continuously changing velocity.
 
 The calculation assumes 8000 scans/s. Actual 8 kHz hardware acquisition has
 not been established, so this is not a calibrated speed in distance/time.
-Very short taps still produce ordered Note On/Off after the five-sample
-window, but the resulting sound may be very short or inaudible.
+Very short taps still produce ordered Note On/Off once the window closes,
+but the resulting sound may be very short or inaudible. Keep press thresholds
+above 2500: below the bottom-out threshold no window can collect a fit.
 
 ## 9. Use the configuration GUI
 
@@ -571,7 +575,7 @@ optical scan frame — the fastest rate the keyboard produces, about
 1.35 k samples/s on this hardware; the keyboard drawing pauses while it is
 active) and holds the first 20 samples after the selected key's trigger, with
 the trigger sample marked in orange. The firmware's velocity fit is
-reproduced from the same five-sample window the device uses and shown as
+reproduced from the same bottom-out window the device uses and shown as
 counts/s and 0–1. A new press replaces the held capture; changing the
 selected key or unchecking the mode clears it and restores live telemetry.
 
@@ -708,7 +712,7 @@ python3 -u tools/decode_scan_stream.py /dev/ttyACM0 --last-key --threshold 3600 
 
 This mode selects its device stream automatically. It prints **Capture
 Armed** with diagnostics, identifies the triggering key, prints the next
-20 decimal readings one per line, then reports velocity from the first five.
+20 decimal readings one per line, then reports velocity from the bottom-out window.
 The triggering sample is excluded. The banner means the host is waiting;
 it is not by itself confirmation that the device has replied.
 

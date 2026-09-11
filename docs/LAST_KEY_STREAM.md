@@ -58,30 +58,31 @@ line, followed by a velocity estimate, and exits successfully. The trigger sampl
 include unchanged values and release; there is no rate limiting, interpolation,
 latest-only replacement or skipped report within the requested interval.
 
-Velocity uses the **first five printed readbacks**, with fixed 125 microsecond
-spacing as requested (assumed 8000 Hz). Those five points span 0.5 ms. The
-current host script computes four signed intervals `d[i] = y[i] - y[i+1]`,
-discards the interval furthest from their median (earliest wins ties), and
-returns `8000 * sum(remaining intervals) / 3` **raw counts/second**.
-Output retains three decimal places.
-Positive means pressing/decreasing raw values, negative means releasing,
-and flat readings give zero. The trigger sample and
-remaining fifteen readings do not influence the estimate. The result is
-printed after all twenty readings, and only for a complete valid capture.
-The startup banner and result explicitly identify the 8 kHz assumption.
-This is not calibrated millimeters/second and does not use measured delivery
-timing: an actual 8 kHz acquisition rate is not established.
+Velocity uses the same bottom-out window as the MCU: the **triggering
+readback** plus the following values, cut before the first sample below 2500,
+ten readbacks maximum. The host script computes signed intervals
+`d[i] = y[i] - y[i+1]`, and when more than five samples were collected
+discards the interval furthest from their median (earliest wins ties); shorter
+windows keep every interval, so the estimate is exactly `d(x)/count`.
+The result is `8000 * mean(kept intervals)` **raw counts/second**, printed to
+three decimal places. Positive means pressing/decreasing raw values, negative
+means releasing, and flat readings give zero. Readings outside the window do
+not influence the estimate. The result is printed after all twenty readings,
+and only for a complete valid capture. The startup banner and result
+explicitly identify the 8 kHz assumption. This is not calibrated
+millimeters/second and does not use measured delivery timing: an actual 8 kHz
+acquisition rate is not established.
 
 This host estimator matches the Huntsman MCU estimator before normalization.
 
 ### Repeat captures
 
 Add `--repeat` to keep the same stream/session open after each capture. Each
-cycle prints the triggering key, its next 20 values and the five-point velocity.
+cycle prints the triggering key, its next 20 values and the bottom-out window velocity.
 The host then consumes and validates every report without printing the held
 key's additional values. When **that captured key** reads strictly greater
 than the threshold, it prints `Capture Armed` with the release value and
-trigger threshold, resets the capture/velocity window, and waits for another
+trigger threshold, resets the capture and its velocity window, and waits for another
 below-threshold press. Equality does not re-arm or trigger. If the twentieth
 sample is already above threshold, it re-arms immediately after printing that
 capture's velocity. A release earlier inside the fixed twenty-sample window
@@ -189,7 +190,7 @@ cmake --build --preset huntsman --target audit-keyboard audit-lighting
 Current host tests cover the startup banner being flushed before any input,
 key identification, exactly 20 readings after the trigger, early EOF and
 key-switch warning/restarts with fresh velocity windows, and exit without waiting for the input to close. They
-also cover five-point velocity sign/scaling, flat/noisy inputs, exclusion of
+also cover velocity-window sign/scaling, flat/noisy inputs, exclusion of
 the trigger and later samples, repeat release boundaries, independent repeated
 velocity windows, two complete captures in a still-running process terminated
 only by SIGINT, loss detection between captures, fragmentation,

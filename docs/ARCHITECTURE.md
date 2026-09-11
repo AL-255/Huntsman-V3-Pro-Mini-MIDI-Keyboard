@@ -51,7 +51,7 @@ own vendor-supported stack; it need not implement an NXP compatibility shim.
 | --- | --- |
 | `keyboard_app` | Shared lifecycle, mode/menu dispatch, calibration orchestration, output retries, stale/fault cleanup |
 | `keyboard_command` | Common `cfg` parsing, validation and acknowledgments |
-| `keyboard_raw` | Per-key Schmitt state and independent five-sample velocity windows |
+| `keyboard_raw` | Per-key Schmitt state and independent bottom-out velocity windows |
 | `keyboard_engine`, `keyboard_config` | NKRO ownership, Fn routing and editor state transitions |
 | `keyboard_midi`, `midi_music` | Notes, velocity, pressure, wheels, sustain, octave and scale filtering |
 | `keyboard_menu`, `keyboard_text` | Release-triggered menus and interruptible text lighting |

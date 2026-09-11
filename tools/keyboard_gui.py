@@ -12,7 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from keyboard_gui_model import Snapshot, ansi_geometry, profile_from_snapshot, validate_pair, validate_profile, note_name, parse_note, MIDI_CONTROLS, CAPTURE_POINTS, KeystrokeCapture
 from keyboard_gui_transport import Connection, find_cdc_device, USB_VENDOR_ID, USB_PRODUCT_ID
-from last_key_stream import press_velocity
+from last_key_stream import press_velocity, velocity_window
 
 AXIS_W = 34  # left gutter for the raw-value vertical axis of the bottom plot
 
@@ -170,9 +170,13 @@ class App:
         if not samples: return
         press,release = s.press[self.selected],s.release[self.selected]
         for raw in samples: self.capture.feed_sample(raw,press,release)
-        if self.capture.velocity is None and len(self.capture.points) >= 6:
-            # Samples 1..5 after the trigger: the device's own velocity window.
-            self.capture.velocity = press_velocity(tuple(self.capture.points[1:6]))
+        if self.capture.velocity is None and len(self.capture.points) >= 2:
+            # Mirror the device fit: up to ten points from the trigger, cut
+            # before the bottom-out sample (2500); median interval filter only
+            # when more than five samples were collected.
+            window = velocity_window(self.capture.points)
+            if window is not None and len(window) >= 2:
+                self.capture.velocity = press_velocity(tuple(window))
         self._rate_count += len(samples)
         if self._rate_at is None: self._rate_at = time.monotonic()
         elapsed = time.monotonic()-self._rate_at

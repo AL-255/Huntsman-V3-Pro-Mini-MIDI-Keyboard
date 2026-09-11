@@ -79,8 +79,8 @@ static unsigned events(unsigned status,unsigned note)
 }
 static void press_fit(unsigned i)
 {
-    values[i]=2400; step();
-    for (unsigned j=1;j<=5;++j) { values[i]=2400-j*100; step(); }
+    values[i]=3400; step(); /* trigger: the window starts at this readback */
+    for (unsigned j=1;j<=9;++j) { values[i]=3400-j*100; step(); }
 }
 static void default_mapping(void)
 {
@@ -131,7 +131,7 @@ static void short_taps_and_overlap(void)
 {
     init(); toggle(); const unsigned tab=sensor(0x2b,0);
     for(unsigned i=0;i<6;++i) { values[tab]=i%2 ? 3900 : 2400; step(); }
-    for(unsigned i=0;i<5;++i) step();
+    for(unsigned i=0;i<9;++i) step(); /* the ten-sample window closes the fit */
     drain(); assert(events(0x90,72)==3 && events(0x80,72)==3);
     for(unsigned i=0;i<logged;++i) if(log_events[i][1]==0x90) assert(log_events[i][3]>=1);
 }
@@ -142,8 +142,11 @@ static void shift_and_filtered_strike(void)
     assert(raw.engine.report.modifiers==2);
     values[shift]=3900; step(); toggle();
     values[shift]=2400; step();
-    const uint16_t points[]={2300,2200,1200,1100,1000};
-    for(unsigned i=0;i<5;++i) {values[shift]=points[i]; step();}
+    /* The fall keeps the window above the bottom-out 2500; the rise back from
+     * the 2400 trigger is the pop the median filter discards, leaving the
+     * clean 100-counts/sample slope (800000 counts/s -> MIDI velocity 23). */
+    const uint16_t points[]={3300,3200,3100,3000,2900,2800,2700,2600,2500};
+    for(unsigned i=0;i<9;++i) {values[shift]=points[i]; step();}
     drain(); assert(events(0x90,60)==1 && log_events[0][3]==23);
     assert(raw.engine.report.modifiers==0);
     values[shift]=3900; step(); drain(); assert(events(0x80,60)==1);
@@ -193,13 +196,15 @@ static void polyphony(void)
         bool play[65]={0};
         for (unsigned i=0;i<raw.count;++i) {
             play[i]=midi.role[i]==0;
-            if (play[i]) { midi.mapping[i]=i; values[i]=2400; ++voices; }
+            if (play[i]) { midi.mapping[i]=i; values[i]=3400; ++voices; }
         }
-        step();
-        for(unsigned j=1;j<=5;++j) {
-            for(unsigned i=0;i<raw.count;++i) if(play[i]) values[i]=2400-j*(100+i);
+        step(); /* trigger: every window starts above the bottom-out threshold */
+        for(unsigned j=1;j<=4;++j) {
+            for(unsigned i=0;i<raw.count;++i) if(play[i]) values[i]=3400-j*(100+i);
             step();
         }
+        for(unsigned i=0;i<raw.count;++i) if(play[i]) values[i]=2400; /* bottom-out closes each five-sample window */
+        step();
         drain();
         unsigned ons=0;
         for(unsigned i=0;i<logged;++i) if(log_events[i][1]==0x90) {

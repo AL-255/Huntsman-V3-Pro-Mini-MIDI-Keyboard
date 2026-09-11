@@ -14,7 +14,7 @@ Calibration uses a separately bounded two-page flash writer.
 
 ## Ownership and scan flow
 
-`keyboard_raw.c` owns per-sensor Schmitt state and independent five-sample
+`keyboard_raw.c` owns per-sensor Schmitt state and independent bottom-out
 velocity registration. `keyboard_midi.c` owns performance mode, MIDI mapping,
 octave, pending strikes, note ownership and MIDI transmission scheduling.
 `keyboard_app.c` owns the shared frame/service lifecycle and storage callbacks.
@@ -143,7 +143,7 @@ Huntsman declares a nominal `sample_hz = 8000`; other boards supply their rate.
 For four values, median means the midpoint of the two middle sorted values.
 Exactly one interval is discarded, even when all deviations tie. Fractions
 are retained until float normalization. The filter adds no scan delay beyond
-the five-sample capture window. See [filter edge cases](MIDI_FILTER.md).
+the bottom-out capture window. See [filter edge cases](MIDI_FILTER.md).
 
 The MCU computes both the normalized float and the final MIDI byte. The GUI
 does not normalize velocity. A Note On with velocity zero has Note Off semantics,
@@ -278,7 +278,7 @@ Native tests cover all defaults, threshold equality, exact velocity conversion,
 short/overlapping taps, many independent voices across three layouts, duplicate
 notes, transposition, out-of-range muting, reserved controls, busy USB, queue
 overflow, mode switching during cleanup and invalidation. Existing raw tests
-also cover five-point fit normalization/clamps and independent retriggering.
+also cover bottom-out window normalization/clamps and newest-press window ownership.
 
 Linked-ARM tests execute optical DMA, actual USB-MIDI packet submission and
 completion, mode toggling/hold suppression, Note On velocity 23 for a known

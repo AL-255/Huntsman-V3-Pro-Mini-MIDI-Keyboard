@@ -23,10 +23,10 @@ python3 tools/keyboard_gui.py --device /dev/ttyACM1   # explicit node override
 
 Current application: `build-keyboard-fn-menu/huntsman_firmware.bin`, exactly 131072 bytes,
 linked at `0x20000000`, sha256
-`dc9829f184fd211d304aad11546d628c147fea24a2ec8257fc02dd031659743f`
+`f037792907acb7cc63c7fa08415c36be32647489e7391e86f3c2e7a10d087e40`
 (flashed with the sibling updater's application-only path and verified live:
-GUI telemetry, pinned-sensor stream at ~1.35 k samples/s, stream switch-back).
-Original bootloader/update transport is unchanged.
+GUI telemetry, pinned-sensor stream at ~1.35 k samples/s, stream switch-back,
+bottom-out velocity windows). Original bootloader/update transport is unchanged.
 
 The Linux GUI uses Python's standard library and Tk (`python3-tk` must be
 installed). No pip packages are required. Your user needs access to the CDC
@@ -151,10 +151,11 @@ sample slots. Releasing the key does not truncate the capture, and a new down
 edge always restarts it — the latest keystroke wins. Changing the selected key
 or toggling the mode clears the capture.
 
-Because the capture is full-rate, samples 1–5 after the trigger are exactly
-the five readbacks of the device velocity window. The GUI reproduces the
-firmware's fit on those five samples (four signed intervals, one median
-outlier discarded, average × assumed 8 kHz) and shows both the raw result and
+Because the capture is full-rate, the GUI reproduces the firmware's velocity
+window exactly: the triggering point plus the following readbacks, cut before
+the first sample below the shared bottom-out threshold of 2500 (ten maximum),
+total drop divided by the interval count, with the median interval filter only
+when more than five samples were collected. It shows both the raw result and
 its 0–1 normalization, e.g. `velocity 0.0889 [0–1] (400,000 counts/s; assumed
 8 kHz)`, so each held raw fall can be compared with the velocity value the
 device reports for the same keystroke. The plot holds its points and the

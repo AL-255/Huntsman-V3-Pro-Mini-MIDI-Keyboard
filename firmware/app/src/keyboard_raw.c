@@ -10,10 +10,10 @@ void keyboard_raw_invalidate(keyboard_raw_t *s)
     for (unsigned i = 0; i < RAW_KEY_COUNT; ++i) {
         keyboard_velocity_t *v = &s->velocity[i];
         v->ready = v->valid = false;
-        v->pending = v->write = 0u;
+        v->pending = v->count = 0u;
         v->value = 0;
-        /* Preserve the completion counter across configuration/faults. Five
-         * NEW valid samples must arrive before any new result can complete. */
+        /* Preserve the completion counter across configuration/faults. A new
+         * result requires a fresh release-armed trigger and a closed window. */
     }
     const keyboard_config_t saved=s->engine.config;
     keyboard_engine_init(&s->engine, s->profile);
@@ -69,52 +69,67 @@ bool keyboard_raw_set_all(keyboard_raw_t *s, unsigned press, unsigned release)
     return true;
 }
 
-static void velocity_frame(keyboard_velocity_t *v, uint16_t raw, bool trigger, bool released, uint32_t sample_hz)
+static void velocity_finish(keyboard_velocity_t *v, uint32_t sample_hz)
 {
-    v->window[v->write] = raw;
-    v->write = (v->write + 1u) % 5u;
-    if (v->pending & 16u) {
-        /* The triggering sample is excluded. At trigger+5 the rolling window
-         * contains exactly samples +1..+5, oldest at the next write slot.
-         * Four signed intervals: decreasing ADC means positive velocity.
-         * Discard one furthest from the median (earliest wins ties), then
-         * average the other three. Keep fractions until float normalization. */
-        const unsigned w = v->write;
-        int32_t delta[4], sorted[4], sum = 0;
-        for (unsigned i = 0; i < 4; ++i) {
-            delta[i] = (int32_t)v->window[(w+i)%5u] - v->window[(w+i+1u)%5u];
-            sorted[i] = delta[i]; sum += delta[i];
-        }
-        for (unsigned i = 1; i < 4; ++i) {
+    v->pending = 0u;
+    unsigned intervals = v->count ? v->count - 1u : 0u;
+    v->count = 0u;
+    if (!intervals) return; /* triggering sample alone; keep the last result */
+    int32_t delta[RAW_VELOCITY_WINDOW-1u], sorted[RAW_VELOCITY_WINDOW-1u], sum = 0;
+    for (unsigned i = 0; i < intervals; ++i) {
+        delta[i] = (int32_t)v->window[i] - v->window[i+1u];
+        sorted[i] = delta[i]; sum += delta[i];
+    }
+    /* Median filter only for windows longer than five samples (five or more
+     * intervals): discard the interval furthest from the median (earliest
+     * wins ties). Shorter windows keep every interval, so their speed is
+     * exactly d(x)/count. */
+    if (intervals > 4u) {
+        for (unsigned i = 1; i < intervals; ++i) {
             const int32_t item = sorted[i];
             unsigned j = i;
             while (j && sorted[j-1] > item) { sorted[j] = sorted[j-1]; --j; }
             sorted[j] = item;
         }
-        const int32_t twice_median = sorted[1] + sorted[2];
+        const int32_t twice_median = sorted[(intervals-1u)/2u] + sorted[intervals/2u];
         unsigned outlier = 0;
         int32_t largest = -1;
-        for (unsigned i = 0; i < 4; ++i) {
+        for (unsigned i = 0; i < intervals; ++i) {
             int32_t distance = 2 * delta[i] - twice_median;
             if (distance < 0) distance = -distance;
             if (distance > largest) { largest = distance; outlier = i; }
         }
-        const float raw_velocity = (float)(sum - delta[outlier]) * ((float)sample_hz / 3.0f);
-        v->value = raw_velocity <= 0 ? 0.0f : raw_velocity >= 4500000 ? 1.0f
-                   : raw_velocity / 4500000.0f;
-        ++v->captures;
-        v->valid = true;
+        sum -= delta[outlier];
+        --intervals;
     }
-    v->pending = (v->pending << 1u) & 31u;
+    const float raw_velocity = (float)sum * ((float)sample_hz / (float)intervals);
+    v->value = raw_velocity <= 0 ? 0.0f : raw_velocity >= 4500000 ? 1.0f
+               : raw_velocity / 4500000.0f;
+    ++v->captures;
+    v->valid = true;
+}
+
+static void velocity_frame(keyboard_velocity_t *v, uint16_t raw, bool trigger, bool released, uint32_t sample_hz)
+{
     if (released) v->ready = true;
     if (trigger && v->ready) {
-        v->pending |= 1u;
+        /* A new press always owns the window: the triggering sample is x0 and
+         * any unfinished collection is discarded. The window then collects the
+         * following readbacks until ten are gathered or the raw value crosses
+         * below the bottom-out threshold (that sample is excluded), whichever
+         * comes first; very fast presses therefore fit on a few samples. */
         v->ready = false;
+        v->count = 1u;
+        v->window[0] = raw;
+        v->pending = 1u;
     }
-    /* Release can rearm before an earlier fit completes. The five-bit delay
-     * line retains EVERY pending trigger; overlapping windows do not cancel
-     * each other. At most one trigger per key per scan, so it cannot overflow.
-     * This runs while host HID is disabled too, for safe GUI tuning. */
+    else if (v->pending) {
+        if (raw < RAW_BOTTOM_OUT) velocity_finish(v, sample_hz);
+        else {
+            v->window[v->count++] = raw;
+            if (v->count >= RAW_VELOCITY_WINDOW) velocity_finish(v, sample_hz);
+        }
+    }
 }
 
 void keyboard_raw_frame(keyboard_raw_t *s, const uint16_t *raw, uint8_t count,

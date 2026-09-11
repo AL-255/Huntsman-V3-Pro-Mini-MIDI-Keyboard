@@ -3,8 +3,11 @@
 Normalization is shared application behavior. The `huntsman` build exposes
 it over HKG6; see [current validation](CALIBRATION.md#validation-status).
 
-The keyboard forms four intervals from five post-trigger samples, discards
-the furthest median outlier and averages three intervals at the board-declared rate
+The keyboard collects a velocity window from the triggering sample onward
+(ten readbacks maximum, closed early by the shared bottom-out threshold of
+2500), computes the total drop divided by the interval count at the
+board-declared rate, discards the furthest median interval only when more
+than five samples were collected
 ([details](MIDI_FILTER.md)), then stores:
 
 ```text
@@ -13,11 +16,12 @@ normalized_velocity = clamp(raw_velocity / 4500000.0, 0.0, 1.0)
 
 Velocities <= 0 become exactly 0.0; velocities >= 4,500,000 become exactly
 1.0. Values between are linear. The register is a 32-bit float computed on
-the MCU. Huntsman declares 8 kHz; the synthetic port uses 2 kHz. The five-point
-window, per-key release rearming,
-overlapping captures, validity and counters are unchanged. MIDI independently
-converts this float to attack velocity 1–127. No physical scan-rate change is
-introduced by normalization or calibration.
+the MCU. Huntsman declares 8 kHz; the synthetic port uses 2 kHz. The
+bottom-out window, per-key release rearming, newest-press window ownership,
+validity and counters are shared application behavior. MIDI independently
+converts this float to attack velocity 1–127, emitting each Note On when its
+key's window closes. No physical scan-rate change is introduced by
+normalization or calibration.
 
 The GUI only decodes and formats the received float (three decimal places on
 keys, six in the selected-key panel). It performs no scaling or clamping.
@@ -46,9 +50,10 @@ python3 -B tools/test_keyboard_gui_tk.py
 cmake --build --preset huntsman --target audit-keyboard
 ```
 
-Native and compiled ARM tests cover negative/zero clamping, a small positive
-fit, 4,499,200 / exactly 4,500,000 / 4,500,800 and larger fits, independent
-65-key captures, overlapping windows, and float32 CDC serialization.
+Native and compiled ARM tests cover negative/zero clamping, fractional
+bottom-out windows, below/above 4,500,000 fits, independent 65-key captures,
+newest-press window ownership, filtered ten-sample windows and unfiltered
+five-sample windows, and float32 CDC serialization.
 GUI/decoder tests cover display formatting, old-format compatibility,
 invalid float rejection, and apply-all/readback behavior.
 These tests are offline and do not constitute hardware validation.

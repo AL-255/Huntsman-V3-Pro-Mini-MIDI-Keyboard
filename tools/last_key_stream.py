@@ -6,22 +6,46 @@ import time
 
 SIZE = 20
 ASSUMED_SCAN_HZ = 8000
+BOTTOM_OUT = 2500      # velocity window closes below this raw value (excluded)
+VELOCITY_WINDOW = 10   # maximum readbacks per fit, triggering sample included
 
 
 def press_velocity(samples):
-    """Five samples, four signed intervals, one discarded median outlier.
+    """Velocity of a closed window, matching the MCU fit.
 
-    The earliest interval wins equal-distance ties. Average the remaining
-    three at the assumed 8 kHz; positive means press. Matches MCU filtering,
-    before its 0..1 clamp/normalization; host output retains fractional counts/s.
+    ``samples`` is the window including the triggering readback: up to ten
+    consecutive values, cut before the first sample below BOTTOM_OUT. The
+    speed is the total drop divided by the interval count at the assumed
+    8 kHz. Windows longer than five samples additionally discard the single
+    interval furthest from the median (earliest wins ties); host output
+    retains fractional counts/s, before the MCU's 0..1 clamp.
     """
-    if len(samples) != 5:
-        raise ValueError('velocity requires exactly five readbacks')
+    if len(samples) < 2 or len(samples) > VELOCITY_WINDOW:
+        raise ValueError(f'velocity requires 2..{VELOCITY_WINDOW} window readbacks')
     delta = [a-b for a,b in zip(samples,samples[1:])]
-    ordered = sorted(delta)
-    twice_median = ordered[1]+ordered[2]
-    outlier = max(range(4),key=lambda i:abs(2*delta[i]-twice_median))
-    return (sum(delta)-delta[outlier]) * ASSUMED_SCAN_HZ / 3
+    if len(samples) > 5:
+        ordered = sorted(delta)
+        twice_median = ordered[(len(delta)-1)//2] + ordered[len(delta)//2]
+        outlier = max(range(len(delta)),key=lambda i:abs(2*delta[i]-twice_median))
+        del delta[outlier]
+    return sum(delta) * ASSUMED_SCAN_HZ / len(delta)
+
+
+def velocity_window(points):
+    """First ten points of a capture, cut before the bottom-out sample.
+
+    Returns the closed window once it is complete (ten points, or a
+    bottom-out sample already present in ``points``); None while the window
+    is still collecting. The triggering point is window sample zero.
+    """
+    window = list(points[:VELOCITY_WINDOW])
+    for i, value in enumerate(window):
+        if i and value < BOTTOM_OUT:
+            del window[i:]
+            break
+    if len(window) < VELOCITY_WINDOW and len(points) <= len(window):
+        return None  # fewer than ten points and no bottom-out yet: still open
+    return window
 
 
 class StreamError(Exception):
@@ -100,7 +124,7 @@ class KeyCapture:
         self.state = 'armed'
         self.key = None
         self.captured = 0
-        self.first_five = []
+        self.velocity_samples = []  # up to ten readbacks from the trigger, cut at bottom-out
         self.done = False
 
     def rearm(self, value):
@@ -125,16 +149,19 @@ class KeyCapture:
                 raise StreamError('key index outside selected layout')
             self.key = key
             self.state = 'capture'
+            self.velocity_samples = [value]  # the triggering sample is window x0
             return prefix + [f'Key: {self.labels[key]} (sensor {key})\n']
         if self.state == 'release':
             return [self.rearm(value)] if value > self.threshold else []
         self.captured += 1
-        if len(self.first_five) < 5: self.first_five.append(value)
+        if len(self.velocity_samples) < VELOCITY_WINDOW and value >= BOTTOM_OUT:
+            self.velocity_samples.append(value)
         lines = [f'{value}\n']
         if self.captured == self.count:
-            if len(self.first_five) == 5:
-                lines.append(f'Velocity: {press_velocity(self.first_five):+.3f} raw counts/s '
-                             '(4 intervals, discard 1 outlier, average 3; assumed 8000 Hz; positive=press)\n')
+            if len(self.velocity_samples) >= 2:
+                lines.append(f'Velocity: {press_velocity(self.velocity_samples):+.3f} raw counts/s '
+                             f'(up to {VELOCITY_WINDOW} readbacks incl. trigger, cut before bottom-out {BOTTOM_OUT}; '
+                             f'median interval filter only above five samples; assumed 8000 Hz; positive=press)\n')
             if self.repeat:
                 self.state = 'release'
                 if value > self.threshold: lines.append(self.rearm(value))

@@ -1,8 +1,8 @@
 # Per-key velocity and apply-all thresholds
 
-The `huntsman` build provides HKG6, normalized float
-velocity and the four-interval pop filter. See [MIDI design](MIDI_DESIGN.md)
-and [current validation](CALIBRATION.md#validation-status).
+The `huntsman` build provides HKG6, normalized float velocity, per-key
+bottom-out velocity windows and the gated interval pop filter. See
+[MIDI design](MIDI_DESIGN.md) and [current validation](CALIBRATION.md#validation-status).
 
 ```sh
 cmake --preset huntsman
@@ -38,50 +38,53 @@ The shared [raw engine](../firmware/app/src/keyboard_raw.c) owns one
 
 | Storage | Purpose |
 | --- | --- |
-| Five uint16 samples + write index | Latest five consecutive valid scans of this key |
-| Five-bit pending-trigger mask | One bit for each trigger age 0..4 scans |
+| Ten uint16 window samples + count | The current fit window, starting at the triggering sample |
+| Collecting flag (telemetry: pending) | Set from the trigger until the window closes |
 | Release-armed flag | A new press may register only after raw exceeds this key's release threshold |
 | Float32 velocity + validity flag | Latest normalized filtered estimate for this key |
 | uint32 completion counter | Number of completed fits, wrapping naturally |
 
-The struct is 24 bytes on this target: 1560 bytes for all 65 sensors, no heap,
+The struct is 32 bytes on this target: 2080 bytes for all 65 sensors, no heap,
 shared per-key capture buffer, or variable-size event queue. Normalization uses
 the MCU's floating-point support. Calibration has separate hold registers.
 
 For every valid full scan, each sensor is processed independently:
 
-1. Write its new raw sample into its five-slot circular window.
-2. If a pending trigger is five scans old, calculate its fit from this window
-   and update that key's result/counter.
-3. Advance trigger-age bits.
-4. Rearm if `raw > release`. If its Schmitt state transitions up -> down
-   (`raw < press`) and it is armed, register a new age-zero trigger and disarm.
-5. Independently deliver the ordinary HID down/up transition when keyboard
+1. Rearm if `raw > release`. If its Schmitt state transitions up -> down
+   (`raw < press`) and it is armed, start a new window at this triggering
+   sample and disarm; an unfinished earlier window is discarded — the newest
+   press always owns the window.
+2. Otherwise, while a window is open, append the sample. Close the window
+   when ten samples are collected or when a sample crosses below the shared
+   **bottom-out threshold** of 2500 (that sample is excluded).
+3. On close, calculate the fit and update that key's result/counter.
+4. Independently deliver the ordinary HID down/up transition when keyboard
    output is armed. HID key-down is not delayed for velocity acquisition.
 
 ```text
-scan             trigger     +1     +2     +3     +4     +5
-pending bit         0         1      2      3      4     complete
-fit samples                   y1     y2     y3     y4     y5
+scan          trigger    +1    +2   ...    +9   (ten samples, or cut at raw<2500)
+collecting      set  ---------------------------- closed
+fit samples      x0     x1     x2   ...    x9
 ```
 
-The triggering sample is excluded, matching the host capture script.
-A release before completion does not truncate the five-point window. It can
-arm another press even while the earlier window is pending: multiple age bits
-preserve overlapping captures. Each completes using its own exact next five
-samples. At most one trigger per key per scan can enter this five-scan delay
-line, so it cannot overflow or overwrite an uncompleted trigger. Different
-keys never share sample history, arming state, pending bits or output registers.
+A release before the window closes does not truncate it; it only re-arms the
+key. A window whose triggering sample is already below the bottom-out
+threshold closes without a fit and keeps the previous result. Different keys
+never share sample history, arming state, pending flags or output registers.
 
 The calculation uses the same raw estimator as `press_velocity()` in
 `tools/last_key_stream.py`, followed by MCU-side normalization:
 
 ```text
-intervals = [y1-y2, y2-y3, y3-y4, y4-y5]
-discard the interval furthest from median(intervals), earliest on ties
-raw_velocity = mean(remaining three intervals) * layout.sample_hz
+intervals = [x0-x1, x1-x2, ..., x(n-2)-x(n-1)]
+if the window holds more than five samples:
+    discard the interval furthest from median(intervals), earliest on ties
+raw_velocity = d(x)/count * layout.sample_hz    (total drop / kept intervals)
 velocity = clamp(raw_velocity / 4500000, 0, 1)
 ```
+
+Shorter windows skip the median filter entirely, so their estimate is exactly
+`d(x)/count`. Very fast presses typically fit on three to six readbacks.
 
 The Huntsman descriptor declares **8000 Hz**; another board supplies its own
 acquisition rate. The host capture tool retains its fixed Huntsman 8 kHz
@@ -94,10 +97,17 @@ to attack velocity 1–127. A descriptor's rate does not establish measured
 hardware cadence. See [sampling contracts](PORTING.md#3-acquire-real-analog-samples).
 
 Startup/invalid scans, USB reset and configuration/enable changes invalidate
-results, cancel all pending fits and require a new observed release for each
+results, cancel all open windows and require a new observed release for each
 key. Completion counters are retained until application restart. No fit spans
 an invalid scan or a configuration change. The existing global neutral guard
 for HID output is separate from these independent per-key velocity gates.
+
+MIDI buffers each new note and emits the Note On when its key's window closes,
+so the attack velocity is the completed estimate of that press; a window that
+closes without a fit still releases the buffered note with the last value.
+Press thresholds below the bottom-out 2500 make every press bottom out at the
+trigger, so no fit can complete — keep press thresholds above 2500 for
+meaningful velocity.
 
 ## Telemetry
 
@@ -137,10 +147,11 @@ python3 -B tools/test_keyboard_gui_tk.py
 cmake --build --preset huntsman --target audit-lighting
 ```
 
-Coverage: 65 simultaneous different slopes; equality/release gating; three
-overlapping windows on one key; 16,640 randomized per-key observations checked
-against a full-history oracle; invalid/config cancellation; velocity with HID
-disabled; actual ARM DMA -> estimates -> HKG6 readback; atomic all-key command and
+Coverage: 65 simultaneous different slopes; equality/release gating; bottom-out
+window cuts; newest-press window ownership under rapid retriggers; 16,640
+randomized per-key observations checked against a full-history oracle;
+invalid/config cancellation; velocity with HID disabled; actual ARM DMA ->
+estimates -> HKG6 readback and MIDI Note On velocity; atomic all-key command and
 invalid-request rejection; FS/HS larger-frame transport and pending-buffer
 immutability; legacy decoder compatibility; GUI button/ACK/readback tests via
 PTY and a private virtual display; USB/updater/lighting/stream regressions.

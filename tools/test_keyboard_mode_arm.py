@@ -208,13 +208,14 @@ def midi_tests(args):
     dev.midi_packets.clear(); dev.reports.clear()
     values = dev.raw.copy(); values[labels.index('Tab')] = 3500
     one_raw_frame(dev,values)
-    for v in (3400,3300,3200,3100,3000):
+    for v in (3400,3300,3200,3100,3000,2900,2800,2700,2600):
         values[labels.index('Tab')] = v; one_raw_frame(dev,values)
     dev.service(40)
     assert bytes([9,0x90,72,23]) in dev.midi_packets, dev.midi_packets
     assert any(p[:3] == bytes([10,0xa0,72]) for p in dev.midi_packets)
     assert all(not any(p) for p in dev.reports), dev.reports
-    # The lower row's Shift key emits C4, with the pop filtered on the MCU.
+    # The lower row's Shift key emits C4; its fall crosses the bottom-out
+    # threshold after two intervals, so the fit closes on three samples.
     values=dev.raw.copy(); values[labels.index('LSh')]=3500
     one_raw_frame(dev,values)
     for v in (3400,3300,2300,2200,2100):
@@ -299,38 +300,91 @@ def velocity_tests(args):
     assert s.version == 6 and len(s.velocity) == 65 and not s.flags & 1
     assert s.press==(3500,)*65 and s.release==(3600,)*65
     assert snapshot(dev,'cfg all 300 3600 3700').result==1
-    one_raw_frame(dev,[3500]*65)
-    for j in range(1,6): one_raw_frame(dev,[3500-(i+1)*j for i in range(65)])
+    one_raw_frame(dev,[3500]*65)  # trigger: every window starts at [3500]
+    for j in range(1,10): one_raw_frame(dev,[3500-(i+1)*j for i in range(65)])
     s = snapshot(dev)
-    assert s.captures == (1,)*65, s.captures
+    assert s.captures == (1,)*65, s.captures  # ten samples (trigger + nine) close the window
     assert all(abs(v - 8000*(i+1)/4500000) < 1e-7 for i,v in enumerate(s.velocity)), s.velocity
     assert s.velocity_state == (2,)*65
     assert all(not any(r) for r in dev.reports)
     dev.raw[0] = 3700; s = snapshot(dev); assert not s.velocity_state[0] & 1
     dev.raw[0] = 3701; s = snapshot(dev); assert s.velocity_state[0] & 1
+
+    # Bottom-out cut: a very fast press fits on four samples (no median
+    # filter), and the below-2500 sample that closes it is excluded.
+    baseline = snapshot(dev).captures[0]  # raw[0] = 3701: release rearm only
+    values = dev.raw.copy(); values[0] = 3500; one_raw_frame(dev,values)  # trigger
+    for value in (3200,2900,2600,2400):
+        values = dev.raw.copy(); values[0] = value; one_raw_frame(dev,values)
+    s = snapshot(dev)
+    assert s.captures[0] == baseline+1 and abs(s.velocity[0] - 2400000/4500000) < 1e-7, (s.velocity[0],s.captures[0])
+
+    # Rapid retriggers: the newest press owns the window; the completed fit
+    # uses only the final press's readbacks.
+    values = dev.raw.copy(); values[0] = 3900; one_raw_frame(dev,values)  # release rearms
     rapid = [3500,3800,3490,3810,3480,3400,3390,3380,3370,3360]
     for value in rapid:
         values = dev.raw.copy(); values[0] = value; one_raw_frame(dev,values)
+    for _ in range(3): one_raw_frame(dev,dev.raw)
+    values = dev.raw.copy(); values[0] = 3360; one_raw_frame(dev,values)  # tenth sample
     s = snapshot(dev)
-    assert s.captures[0] == 4 and s.captures[1:] == (1,)*64
-    assert abs(s.velocity[0] - max(0,min(1,press_velocity(rapid[-5:])/4500000))) < 1e-7
-    for points in ((2000,2100,2200,2300,2400),(3000,)*5,
-                   (3000,2999,2998,2996,2976),(3500,2938,2376,1813,813),
-                   (3500,2937,2374,1812,812),(3500,2700,1900,1100,300),
-                   (3000,3000,2990,2970,2940),(3000,2970,2950,2940,2940),
-                   (3400,3300,2300,2200,2100),(2000,1990,2990,2980,2970)):
-        dev.raw[0] = 3900; baseline = snapshot(dev).captures[0]
-        # Keep this single-strike fixture below release. A value of 4096 in
-        # its window rearms and triggers a second valid capture, which can
-        # replace the first result before the next slow GUI snapshot.
-        values = dev.raw.copy(); values[0] = 3500; one_raw_frame(dev,values)
+    final_window = [3480,3400,3390,3380,3370,3360,3360,3360,3360,3360]
+    assert s.captures[0] == baseline+2 and s.captures[1:] == (1,)*64, s.captures
+    assert abs(s.velocity[0] - max(0,min(1,press_velocity(final_window)/4500000))) < 1e-7
+
+    fixtures = [
+        ([3510,3520,3530,3540,3550,3560,3570,3580,3590], False, -80000),   # rising -> 0
+        ([3500]*9, False, 0),                                             # flat
+        ([3490,3480,3470,3460,3450,3440,3430,3420,3410], False, 80000),   # filtered slow fall
+        ([3200,2900,2601], True, 899/3*8000),    # four samples, no filter, fractional
+        ([2938], True, 562*8000),                # just below 4500000
+        ([2937], True, 563*8000),                # just above 4500000
+        ([2500], True, 1000*8000),               # far above 4500000
+        ([2900,2890,2880,2870,2860,2850,2840,2830,2820], False, 80000),   # ten-sample filtered fall
+    ]
+    for points,bottom,raw_speed in fixtures:
+        values = dev.raw.copy(); values[0] = 3900; one_raw_frame(dev,values)
+        baseline = snapshot(dev).captures[0]
+        values = dev.raw.copy(); values[0] = 3500; one_raw_frame(dev,values)  # trigger
         for value in points:
-            values[0] = value; one_raw_frame(dev,values)
+            values = dev.raw.copy(); values[0] = value; one_raw_frame(dev,values)
+        if bottom:
+            values = dev.raw.copy(); values[0] = 2400; one_raw_frame(dev,values)
         s = snapshot(dev)
-        expected = max(0,min(1,press_velocity(points)/4500000))
+        expected = max(0,min(1,raw_speed/4500000))
         assert type(s.velocity[0]) is float and abs(s.velocity[0]-expected) < 1e-7, (points,s.velocity[0],expected,s.captures[0],baseline)
         assert s.captures[0] == baseline+1
-    print('PASS ARM float32 pop filter: negative/zero clamp, fractional mean, below/above 4500000, high/low pops and tie handling')
+    # Long windows filter one glitch interval at every position; five-sample
+    # windows skip the filter entirely (exact d(x)/count); ties discard the
+    # earliest interval.
+    for outlier in range(9):
+        for spike in (-500,500):
+            values = dev.raw.copy(); values[0] = 3900; one_raw_frame(dev,values)
+            values = dev.raw.copy(); values[0] = 3500; one_raw_frame(dev,values)
+            value = 3500
+            for j in range(9):
+                value -= spike if j == outlier else 10
+                values = dev.raw.copy(); values[0] = value; one_raw_frame(dev,values)
+            s = snapshot(dev)
+            assert abs(s.velocity[0] - 80000/4500000) < 1e-7
+    for spike in (-100,100):  # small glitches stay below release: no retrigger at the closer
+        values = dev.raw.copy(); values[0] = 3900; one_raw_frame(dev,values)
+        values = dev.raw.copy(); values[0] = 3500; one_raw_frame(dev,values)
+        value = 3500
+        for j in range(4):
+            value -= spike if j == 2 else 10
+            values = dev.raw.copy(); values[0] = value; one_raw_frame(dev,values)
+        values = dev.raw.copy(); values[0] = 2400; one_raw_frame(dev,values)  # bottom-out closes the five-sample window
+        s = snapshot(dev)
+        assert abs(s.velocity[0] - max(0,min(1,(30+spike)/4*8000/4500000))) < 1e-7
+    for expected,samples in ((90000,[3500,3500,3490,3480,3470,3460,3450,3440,3430,3410]),
+                             (70000,[3500,3480,3470,3460,3450,3440,3430,3420,3410,3410])):
+        values = dev.raw.copy(); values[0] = 3900; one_raw_frame(dev,values)
+        for value in samples:
+            values = dev.raw.copy(); values[0] = value; one_raw_frame(dev,values)
+        s = snapshot(dev)
+        assert abs(s.velocity[0] - expected/4500000) < 1e-7
+    print('PASS ARM float32 velocity: bottom-out windows, retrigger ownership, clamps, glitch filter gating and tie handling')
     s = snapshot(dev,'cfg all 302 3100 3300')
     assert (s.ack,s.result,s.revision) == (302,1,2)
     assert s.press == (3100,)*65 and s.release == (3300,)*65
@@ -340,7 +394,7 @@ def velocity_tests(args):
         s = snapshot(dev,bad)
         assert (s.ack,s.result,s.revision) == (303,2,2)
         assert s.press == (3100,)*65 and s.release == (3300,)*65
-    print('PASS ARM DMA -> 65 independent filtered velocities, overlapping retriggers, HID disabled, atomic all-key command/readback')
+    print('PASS ARM DMA -> 65 independent velocity fits, bottom-out windows, retrigger ownership, HID disabled, atomic all-key command/readback')
 
 
 def main():
