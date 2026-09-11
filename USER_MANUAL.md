@@ -385,13 +385,13 @@ Esc  1   2   3   4   5   6   7   8   9   0   -   =
 A#3  C4  D4  E4  F#4 G#4 A#4 C5  D5  E5  F#5 G#5 A#5
 
 Tab  Q   W   E   R   T   Y   U   I   O   P   [   ]
-B3   C#4 D#4 F4  G4  A4  B5  C#5 D#5 F5  G5  A5  B6
+B3   C#4 D#4 F4  G4  A4  B4  C#5 D#5 F5  G5  A5  B5
 
 Cap  A   S   D   F   G   H   J   K   L   ;   '
 C4   D4  E4  F#4 G#4 A#4 C5  D5  E5  F#5 G#5 A#5
 
 LSh  Z   X   C   V   B   N   M   ,   .   /   RSh
-C#4  D#4 F4  G4  A4  B5  C#5 D#5 F5  G5  A5  B6
+C#4  D#4 F4  G4  A4  B4  C#5 D#5 F5  G5  A5  B5
 ```
 
 Holding Fn+J again previews `JANKO` and switches back; the notes you

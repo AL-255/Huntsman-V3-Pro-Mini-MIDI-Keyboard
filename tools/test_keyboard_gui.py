@@ -285,8 +285,8 @@ class Tests(unittest.TestCase):
         # a row and the specified staggered notes on the physical keys.
         keys = {k.label: k.sensor for k in ansi_geometry()}
         for label,note in (('Esc','A#3'),('1','C4'),('=','A#5'),('Tab','B3'),
-                           ('Q','C#4'),('Y','B5'),('J','D5'),(']','B6'),
-                           ('Cap','C4'),('LSh','C#4'),('B','B5'),('RSh','B6')):
+                           ('Q','C#4'),('Y','B4'),('J','D5'),(']','B5'),
+                           ('Cap','C4'),('LSh','C#4'),('B','B4'),('RSh','B5')):
             self.assertEqual(JANKO_NOTES[label],note)
             self.assertIn(label,keys)
         labels = [k.label for k in ansi_geometry()]

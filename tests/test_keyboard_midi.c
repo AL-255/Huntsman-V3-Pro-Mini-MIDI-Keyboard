@@ -227,15 +227,15 @@ static void janko_mode(void)
     janko_strike(0x2e,82,0); /* =    A#5 */
     janko_strike(0x2b,59,0); /* Tab  B3  */
     janko_strike(0x14,61,0); /* Q    C#4 */
-    janko_strike(0x1c,83,0); /* Y    B5  */
-    janko_strike(0x30,95,0); /* ]    B6  */
+    janko_strike(0x1c,71,0); /* Y    B4  */
+    janko_strike(0x30,83,0); /* ]    B5  */
     janko_strike(0x39,60,0); /* Caps C4  */
     janko_strike(0x0d,74,0); /* J    D5  */
     janko_strike(0x34,82,0); /* '    A#5 */
     janko_strike(0xe1,61,2); /* LSh  C#4 */
     janko_strike(0x1d,63,0); /* Z    D#4 */
-    janko_strike(0x05,83,0); /* B    B5  */
-    janko_strike(0xe5,95,32);/* RSh  B6  */
+    janko_strike(0x05,71,0); /* B    B4  */
+    janko_strike(0xe5,83,32);/* RSh  B5  */
     /* Keys outside the table keep their configured mapping (Enter/Backspace). */
     janko_strike(0x2a,94,0); /* BkS  A#6 per the default table */
     /* Fn+Left Shift is ineffective: the lower row stays enabled. */
