@@ -1,9 +1,67 @@
-# Add a MIDI-Typist board
+# Port MIDI-Typist to a new keyboard or MCU
+
+The porting boundary is the **board**, not the manufacturer's name. A port
+owns acquisition, key identity, LED wiring, MCU startup, transport and storage.
+The same shared C11 application supplies typing, MIDI, menus, thresholds,
+velocity, calibration and effect composition.
+
+The repository contains one physical port, Huntsman V3 Pro Mini/LPC5528, and
+one SDK-free reference port. Another keyboard is not ready to flash until its
+board implementation and hardware checks are complete. This guide does not
+authorize overwriting an unknown bootloader or factory data.
+
+## Contents
+
+- [Start with the reference port](#start-with-the-reference-port)
+- [1. Create a board directory and build target](#1-create-a-board-directory-and-build-target)
+- [2. Describe keys independently of scan order](#2-describe-keys-independently-of-scan-order)
+- [3. Acquire real analog samples](#3-acquire-real-analog-samples)
+- [4. Connect the common lifecycle](#4-connect-the-common-lifecycle)
+- [5. Add lighting, storage and host integration](#5-add-lighting-storage-and-host-integration)
+- [6. Prove the port](#6-prove-the-port)
+- [Troubleshooting a new port](#troubleshooting-a-new-port)
+
+## Start with the reference port
 
 Start with [the architecture](ARCHITECTURE.md), then study the small
 [synthetic board](../firmware/boards/synthetic/src/synthetic_board.c) and its
 [main loop](../firmware/boards/synthetic/src/main.c). They build without NXP
 headers, stock firmware, a keyboard or a USB library.
+
+With a native C compiler, CMake 3.21+, Ninja and Python 3.10+:
+
+```sh
+git clone https://github.com/AL-255/MIDI-Typist.git
+cd MIDI-Typist
+cmake --preset simulator
+cmake --build --preset simulator
+ctest --preset simulator
+./build-simulator/midi_typist_sim
+```
+
+At the simulator prompt:
+
+```text
+status
+set 100 40000
+step 4
+set 100 0
+step 4
+cfg all 1 3500 3600
+status
+quit
+```
+
+Sensor 100 produces an A press/release. `set` changes an ascending 16-bit
+ADC input; `step` produces two modeled acquisitions per millisecond.
+Input zero maps to released 4096. `cfg all` returns `ACK 1 1` on acceptance.
+Output lines are diagnostic renderings, not USB captures; the HID printout
+omits the report's reserved byte. No host key is injected. Saved calibration
+exists only in the simulator process's memory.
+
+Establish the new hardware's boot/update contract, memory map, analog range,
+matrix order, scan cadence, LED protocol, power sequencing and watchdog
+requirements from reliable board-specific evidence before implementing it.
 
 ## 1. Create a board directory and build target
 
@@ -18,6 +76,68 @@ not to the application target. Apply the same ABI options to both: CPU,
 instruction set, float ABI, alignment restrictions and structure layout.
 The provided board manifests are complete examples of target wiring.
 
+A typical port has this shape; only the manifest name is prescribed:
+
+```text
+firmware/boards/my_keyboard/
+  board.cmake
+  include/my_keyboard.h
+  src/layout.c             layout/action/editor/RGB contract
+  src/acquisition.c        ADC, Hall, optical or other analog transport
+  src/storage.c            bounded persistent records
+  src/usb.c                vendor stack, descriptors, completion ownership
+  src/main.c               startup and serialized application owner
+  linker/application.ld    this bootloader's application region only
+```
+
+Reusable MCU integration can live under `firmware/platform/<family>`, selected
+by the board manifest. Keep vendor code/licenses under `third_party` with
+pinned provenance. The existing `nxp_lpc55` integration still uses Huntsman
+USB configuration and updater hooks; it is not a complete drop-in BSP for
+every LPC55 board.
+
+This CMake pattern requires your hardware sources and a `my_vendor_sdk`
+target; it is not a finished hardware manifest:
+
+```cmake
+add_library(port_config INTERFACE)
+target_compile_definitions(port_config INTERFACE
+    MT_KEY_CAPACITY=128 MT_LIGHT_FRAME_BYTES=384 MT_HID_USAGE_MAX=0xdf)
+
+add_library(midi_typist_app OBJECT ${MT_APP_SOURCES})
+target_include_directories(midi_typist_app PUBLIC
+    ${CMAKE_SOURCE_DIR}/firmware/app/include)
+target_link_libraries(midi_typist_app PUBLIC port_config)
+
+add_library(board_io STATIC
+    ${MT_BOARD_DIR}/src/layout.c
+    ${MT_BOARD_DIR}/src/acquisition.c
+    ${MT_BOARD_DIR}/src/storage.c
+    ${MT_BOARD_DIR}/src/usb.c)
+target_include_directories(board_io PUBLIC
+    ${MT_BOARD_DIR}/include ${CMAKE_SOURCE_DIR}/firmware/app/include)
+target_link_libraries(board_io PUBLIC port_config PRIVATE my_vendor_sdk)
+
+add_executable(my_keyboard_firmware ${MT_BOARD_DIR}/src/main.c)
+target_link_libraries(my_keyboard_firmware PRIVATE midi_typist_app board_io)
+```
+
+Set matching CPU/float ABI options on all compiled objects and the final link.
+Add startup/vectors, the linker script, image conversion, size checks and
+bootloader-specific integrity checks. Do not expose SDK headers through
+`port_config` or global `include_directories`.
+
+After creating the port and its toolchain, configure a separate build directory:
+
+```sh
+cmake -S . -B build-my-keyboard -G Ninja \
+  -DMT_BOARD=my_keyboard \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/my-mcu-toolchain.cmake
+cmake --build build-my-keyboard
+```
+
+Add a named preset if useful. Each board/toolchain needs its own CMake cache.
+
 Select consistent capacities for every object that includes public headers:
 
 | Definition | Default | Huntsman |
@@ -31,6 +151,12 @@ Counts must be nonzero and no greater than capacity; capacity must be below
 to `KEYBOARD_NKRO_REPORT_BYTES`; do not reuse the Huntsman descriptor when
 choosing the wider default report. Arrays are fixed-capacity, not allocated
 per interrupt. Inspect the linker map and stack margins for your own MCU.
+The allowed HID upper usage is 0x73…0xDF: Huntsman reports 16 bytes, and the
+default wider report is 30 bytes. No Report ID byte is included in
+`keyboard_report_t`. A hardware FPU is not required by the API, but
+software-float velocity calculation needs a measured execution budget.
+Transport serialization owns byte order; HKG6 specifically requires
+IEEE-754 32-bit float encoding rather than arbitrary native struct copying.
 
 ## 2. Describe keys independently of scan order
 
@@ -42,6 +168,18 @@ Implement the functions declared in
 - `keyboard_action`: base/Fn actions for each valid key ID.
 - `keyboard_lower_group`: membership in the optional lower MIDI group.
 - Editor digit/step/exclusion, actuation-pair and travel-level queries.
+
+| Query | Required result |
+| --- | --- |
+| `keyboard_editor_digit(profile, key)` | Level 1…10, or 0 for a non-selector |
+| `keyboard_editor_step(profile, key)` | +1, -1 or 0 |
+| `keyboard_editor_preview_control(profile, key)` | Whether to exclude this key from travel-bar sensing |
+| `keyboard_actuation_pair(config, key, press, release)` | Normalized 8-bit press/release levels, using `config->profile` |
+| `keyboard_travel_level(lower, upper, raw)` | Increasing travel 0…255, consistent with editor comparisons |
+
+Descriptors need nonzero count and scan rate, and both eleven-entry level
+tables (indices 1…10 are used). Layout and action pointers must remain stable.
+Queries are called frequently: use bounded lookups, not I/O or allocation.
 
 Key IDs 0 and 255 are reserved. Use unique nonzero IDs, independently of
 USB HID usages. A plain keyboard action uses type 2, modifier bits in
@@ -60,6 +198,8 @@ Describe the board's supported editor keys even if their physical arrangement
 differs. A keyboard missing a menu letter cannot show that letter or offer
 that physical selector; do not silently invent a hardware key. Board-local
 action mappings can assign suitable physical controls.
+Present an unambiguous sensor for each control role. Missing letter keys may
+shorten text previews; the renderer cannot invent missing physical keys.
 
 ## 3. Acquire real analog samples
 
@@ -74,10 +214,30 @@ full-scale endpoints and retain real travel variation for calibration to learn.
 Equal conversion endpoints are rejected. Bus/ADC errors must make the frame
 invalid rather than becoming a valid zero-pressure sample.
 
+The converter rounds and saturates at its endpoints. It does not detect
+broken wires, ADC saturation or stale DMA data; those are acquisition faults.
+Wider-than-16-bit readings need safe reduction in the board, not truncation.
+
+| Coordinate system | Meaning |
+| --- | --- |
+| Native ADC and full-scale endpoints | Board-owned electrical units and polarity |
+| Canonical samples and Schmitt thresholds | Shared 1…4096 decreasing application units |
+| Per-key lower/upper calibration | Fully pressed/resting canonical bounds for lighting and aftertouch |
+
+Startup Schmitt defaults are 3500/3600; wheels use 3800…1000 and velocity
+saturates at 4,500,000 canonical counts/s. Calibration requires rest at least
+2048, a held candidate no higher than half its rest value and valid bounds
+spanning at least 512. These are shared behavior, not inferred properties of
+your sensor. Validate that the board's normalization and fallback bounds make
+real travel usable under these rules. Calibration does not retune thresholds.
+
 Set `sample_hz` to the actual intended frame rate. The five post-trigger
 samples span four intervals, so a different frame rate changes the velocity
 multiplier. Nominal configuration is not a measurement of hardware timing:
 measure cadence, dropped frames and worst-case service time under polyphony.
+Provide milliseconds separately as a monotonic uint32 timer; wrapping is
+expected. At 2 kHz, consecutive scans can share one millisecond timestamp.
+Never derive acquisitions from GUI refreshes or a wall-clock catch-up loop.
 
 ## 4. Connect the common lifecycle
 
@@ -104,6 +264,80 @@ The send callbacks copy or take ownership before returning true. Return false
 while busy. This preserves the ordered Note On/Off/sustain queue and immutable
 HID submissions without a port-specific copy of the performance engine.
 
+### Lifecycle adapter example
+
+This is an application adapter, not peripheral initialization. Implement the
+declared `port_*` functions in your board. `port_read_frame` returns true only
+for a new complete acquisition, supplies canonical samples with matching
+profile/count and current bounds, and reports validity separately.
+`port_discontinuity` consumes a latched reset or lost-frame event.
+
+```c
+#include "keyboard_app.h"
+
+static keyboard_raw_t raw;
+static keyboard_midi_t midi;
+static keyboard_menu_t menu;
+static keyboard_calibration_t calibration;
+static keyboard_app_t app;
+static uint16_t samples[MT_KEY_CAPACITY];
+static uint16_t lower[MT_KEY_CAPACITY], upper[MT_KEY_CAPACITY];
+static uint8_t rgb[LIGHTING_FRAME_SIZE];
+
+extern const keyboard_app_ops_t port_storage_ops;
+extern uint32_t port_milliseconds(void);
+extern void port_service_io(void);
+extern bool port_healthy(void);
+extern bool port_discontinuity(void);
+extern bool port_read_frame(uint16_t *samples, uint8_t *count, uint8_t *profile,
+                            uint16_t *lower, uint16_t *upper, bool *valid);
+extern bool port_send_keyboard(const keyboard_report_t *report);
+extern bool port_send_midi(uint8_t cin, uint8_t status, uint8_t a, uint8_t b);
+extern void port_offer_lights(const uint8_t *frame, unsigned bytes);
+extern void port_idle(void);
+
+void application_start(void)
+{
+    keyboard_app_init(&app, &raw, &midi, &menu, &calibration, &port_storage_ops);
+}
+
+void application_poll(void)
+{
+    port_service_io();
+    uint32_t now = port_milliseconds();
+    if (port_discontinuity())
+        keyboard_app_invalidate(&app, now);
+
+    uint8_t count = 0, profile = 0;
+    bool valid = false;
+    if (port_read_frame(samples, &count, &profile, lower, upper, &valid))
+        keyboard_app_frame(&app, samples, count, profile, lower, upper,
+                           valid && port_healthy(), now);
+
+    keyboard_app_service(&app, now, port_healthy(),
+                         port_send_keyboard, port_send_midi);
+    keyboard_app_lights(&app, lower, upper, rgb, now);
+    port_offer_lights(rgb, sizeof(rgb));
+    port_idle();
+}
+```
+
+Call start after board initialization and poll from the single owner.
+Never write more than capacity into the arrays. Establish fallback bounds
+at layout discovery; preserve successful calibration loads instead of
+overwriting them on every frame. The state and ops table must outlive all calls.
+
+The LED offer function copies into board-owned transfer memory or a latest-only
+desired frame; it must not retain the scratch pointer across another poll.
+Idle must not hide a ready frame or delay fault cleanup. Handle known faults
+immediately; the 100 ms stale guard is a fallback, not an acceptable buffer age.
+
+An RTOS port drives these same calls from one owner task. ISRs signal
+completion through the kernel's ISR-safe facilities rather than calling the
+application. Budget priorities, stacks, buffer ownership and maximum sleep.
+FreeRTOS is optional and not linked by the current ports; see
+[the scheduling decision](SCHEDULING.md).
+
 ## 5. Add lighting, storage and host integration
 
 `keyboard_light_set` writes RGB intensities into the supplied byte framebuffer
@@ -112,6 +346,11 @@ the setter; its scan/key behavior still works. If LEDs require gamma conversion,
 bit packing or command headers, encode those at hardware submission, after the
 application's linear intensity/brightness processing. Preserve a transfer
 snapshot until the peripheral has finished using it.
+The buffer must contain intensity bytes only: shared code clears and scales
+it. Padding is acceptable; controller headers and checksums are not.
+`keyboard_app_lights` includes the menu brightness pass and feedback
+exceptions, so do not apply global brightness again in the board.
+The board owns refresh cadence, gamma/protocol encoding and explicit light-off.
 
 Provide calibration load/save/profile-clear callbacks as appropriate. The
 callbacks own physical pages, checksums, rollback, identity and power-failure
@@ -121,6 +360,25 @@ failure instead of claiming a persistent save. The simulator saves only in
 its process RAM. Huntsman's writer and HKC1 journal are examples for that board,
 not a universal flash layout.
 
+| `keyboard_app_ops_t` callback | Board responsibility |
+| --- | --- |
+| `load_calibration(profile, count, lo, hi)` | Validate identity, complete bounds and integrity before changing arrays; false means no valid load |
+| `save_calibration(cal)` | Persist all staged endpoints and verify them before returning true |
+| `clear_profile()` | Clear only owned custom records after menu confirmation; false means clearing was not verified |
+| `reset_sensors(profile)` | Rebuild board-owned fallback state without an unrelated USB reboot or destructive peripheral restart |
+| `log(message)` | Optional bounded diagnostics, not a blocking serial write |
+
+Callbacks are synchronous with no context argument; the board supplies its
+single-owner storage context. Loading is attempted once after a valid layout
+frame, not continuously. The board owns storage generation/error telemetry.
+The current shared persistence contract covers calibration alone, not
+thresholds, mappings or every transient setting.
+
+Prove page ownership, execution/interrupt safety during erase, watchdog
+behavior, timeouts and power-loss recovery on the actual MCU. FF bytes alone
+do not establish ownership. Huntsman's RAM-executing flash adapter is not
+safe by implication for an MCU executing from the bank being erased.
+
 USB normally exposes NKRO HID, USB-MIDI and CDC through the platform's stack.
 Feed newline-stripped configuration commands to `keyboard_app_command`;
 it implements get/set/all/enable/MIDI/calibrate/cancel validation and ACK
@@ -128,10 +386,27 @@ semantics. Board diagnostics, telemetry serialization and the MCU's firmware
 update path remain in the port. Never copy the Huntsman reset cookie or flash
 addresses to an unrelated bootloader.
 
+The MIDI callback receives CIN, status and two data bytes. USB-MIDI 1.0
+assembles cable 0/CIN plus those bytes; a UART MIDI adapter omits CIN and
+budgets its own bandwidth. The finite output queue requires prompt service.
+HID callbacks receive a transient report pointer and must copy before return.
+Invalidate on disconnect even if the scanner remains healthy.
+
+Choose appropriate product VID/PID/strings and a compatible bootloader
+protocol; do not advertise Huntsman's updater interface without implementing
+its reset/image contract. The
+[Huntsman flasher](https://github.com/AL-255/Huntsman-V3-Pro-Mini-Flasher)
+is a separate board-specific tool, not a universal firmware installer.
+
 The existing GUI/scan tools understand Huntsman wire formats and physical
 geometry. They are not generic MCU discovery or flashing tools. Reusing those
 formats requires matching their layout/size contracts; a different host
 presentation can call the same common configuration command engine.
+Pass bounded, NUL-terminated lines without CR/LF to `keyboard_app_command`.
+False means another handler may inspect the line; true means it was consumed,
+not necessarily accepted. Inspect the ACK ID/result and serialize requests.
+Unparseable IDs leave the previous ACK unchanged. The parser itself neither
+emits text replies nor serializes HKG6; provide settings readback in the port.
 
 ## 6. Prove the port
 
@@ -149,3 +424,37 @@ source files. Adapt the synthetic test to your descriptor and test:
 Then validate on hardware with a recoverable application-only update and
 readback. A simulator or register model does not prove pin routing, electrical
 power behavior, optical timing or real USB signal integrity.
+
+### Minimum acceptance checklist
+
+- [ ] A fresh checkout builds without private extraction or device data.
+- [ ] Shared sources compile using only application headers and standard C.
+- [ ] Map, vectors, application bounds and image format match this bootloader.
+- [ ] Every physical key has a unique sensor/ID and tested action/LED position.
+- [ ] Real resting/pressed values allow neutral arming, wheels and calibration.
+- [ ] Measured acquisition and worst-case processing fit the frame budget.
+- [ ] HID, notes, sustain and cleanup survive backpressure and reconnect.
+- [ ] Menu previews cancel promptly and release gates every deferred action.
+- [ ] An interrupted save cannot replace a valid record with partial data.
+- [ ] Application readback matches and protected data remains unchanged.
+- [ ] A board user guide lists controls, supported features and test limits.
+
+Keep native tests, register models and physical evidence distinct. Huntsman's
+[validation status](CALIBRATION.md#validation-status) is not evidence for a
+different board. The synthetic port has no physical USB, flash or power circuit.
+
+## Troubleshooting a new port
+
+| Symptom | Check at the board boundary |
+| --- | --- |
+| Keys never arm | Canonical polarity/range, all idle values above release, readiness |
+| Velocity is wrong | Distinct acquisitions, declared versus actual rate, normalization range |
+| Menu selects the wrong key | Base HID action versus sensor index versus opaque ID |
+| International keys disappear | HID usage limit, descriptor and report buffer size |
+| Colors move between keys | RGB mapping and immutable transfer snapshots |
+| Notes or sustain stick | Accepted-event ownership, servicing, lost reset events, overflow |
+| Calibration never completes | Rest/half-rest/span requirements, stable holds, storage result |
+| Only hardware fails | Power/watchdog/clock/ADC/USB evidence; do not conceal faults with blind retries |
+
+Do not debug a new port by repeatedly erasing unrelated regions or replacing
+known-good bootloader data. Establish a board-appropriate recovery path first.

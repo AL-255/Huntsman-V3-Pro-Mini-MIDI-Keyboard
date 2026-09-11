@@ -1,5 +1,10 @@
 # Fn system menu, trigger point and brightness
 
+Physical keys, original editor tables and LED timing in this guide describe
+the `huntsman` build. Menu/text state machines live in the shared application;
+the board supplies layout, editor policy and RGB placement. See
+[architecture](ARCHITECTURE.md) and [porting](PORTING.md).
+
 Hold Fn in keyboard mode: keyboard shortcuts below are **green**, settings
 **C, Tab, Caps, K, L and R** are white, and Enter shows the target mode color
 (blue for MIDI, green for keyboard). Other keys are dark. In MIDI mode only
@@ -65,7 +70,7 @@ taps, arrow reports and green LED channel output using modeled ASIC input.
 Fn+Left Shift is a white MIDI-only settings hint. Its preview names the next action:
 `LOWER-OFF` mutes notes on the physical Caps and Shift rows; `LOWER-ON`
 restores them. Release either chord member to apply once, then release every
-key before resuming output. A pre-held S requires a fresh press; invalid
+key before resuming output. A pre-held Left Shift requires a fresh press; invalid
 scans, disable, calibration and configuration changes cancel the preview.
 Keyboard-mode Left Shift/Fn+Left Shift behavior and keyboard shortcut hints are unchanged.
 
@@ -241,16 +246,16 @@ Close the GUI/other CDC tools, select `stream off`, then issue `menu status`
 to read Fn state, editor mode, current/saved actuation level and brightness
 index/PWM, `reset_confirm` and confirmation `ready` flags. Select `stream gui`
 to resume GUI telemetry. HKG6 framing is
-unchanged; the new menu does not require a GUI update.
+defined by the Huntsman port; use a matching HKG6-capable GUI.
 
 ```sh
 cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
+cmake --preset huntsman
+cmake --build --preset huntsman
 # Optional audit dependencies and separate read-only original reference:
-cmake --build --preset keyboard-fn-menu --target audit-menu audit-keyboard
+cmake --build --preset huntsman --target audit-menu audit-keyboard
 ```
 
 Native tests check all raw ADC values against normalized comparisons across

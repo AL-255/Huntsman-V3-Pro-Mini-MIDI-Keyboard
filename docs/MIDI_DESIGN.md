@@ -1,5 +1,9 @@
 # Keyboard and MIDI performance design
 
+The processing engine is shared across platforms. Unless stated otherwise,
+physical key positions, memory figures and USB/GUI framing here describe the
+Huntsman board. New platforms use the same engine through the [porting API](PORTING.md).
+
 Current Huntsman application: `huntsman` (alias `keyboard-fn-menu`). See
 [current validation](CALIBRATION.md#validation-status) and
 [filter design](MIDI_FILTER.md).

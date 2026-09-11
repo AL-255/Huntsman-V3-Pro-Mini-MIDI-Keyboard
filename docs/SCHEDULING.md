@@ -5,6 +5,9 @@ The Huntsman port uses its cooperative main loop and interrupt-driven USB/DMA.
 The synthetic port supplies a deterministic desktop clock. The application
 can be driven from a dedicated task in an RTOS-based board port without
 changing its processing modules.
+The [porting guide's lifecycle example](PORTING.md#lifecycle-adapter-example)
+shows the same owner boundary for a loop or task, with real acquisition
+events separated from millisecond service time.
 
 ## Why the Huntsman does not require FreeRTOS
 

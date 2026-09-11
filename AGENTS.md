@@ -13,6 +13,12 @@
 - Check relative documentation links after moving or deleting a document.
 - Preserve upstream SDK documentation, license notices and provenance; do not
   rewrite vendored material to satisfy the project-documentation rule.
+- Use `huntsman` for complete physical-board build examples and `simulator`
+  for the SDK-free reference port. Keep supported preset aliases explicit;
+  artifact names and USB identities are board contracts, not project branding.
+- Distinguish portable application behavior from Huntsman-specific addresses,
+  timing, sensor counts and host protocols. Update the porting guide when a
+  public board contract changes, and check its examples against current headers.
 
 ## Firmware and data boundaries
 

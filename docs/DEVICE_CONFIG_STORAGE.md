@@ -1,12 +1,17 @@
-# Device calibration storage
+# Huntsman device calibration storage
 
 Calibration uses **only two whole 512-byte pages at physical addresses
 0x7d400 and 0x7d600**. The beginning of configuration storage, including the
 serial number and primary settings at 0x49000..0x49400, is not an erase target.
+The HKC1 serializer and controller adapter belong to the
+[Huntsman board](../firmware/boards/huntsman_v3_pro_mini/src/calibration_store.c).
+Shared calibration requests storage through `keyboard_app_ops_t`; these
+addresses and this 65-sensor format must not be copied to another platform.
+See [the storage port contract](PORTING.md#5-add-lighting-storage-and-host-integration).
 
 ## Evidence and ownership
 
-On 2026-09-05, two independent controller reads of 0x49400..0x7d800 matched,
+Two independent controller reads of 0x49400..0x7d800 matched,
 without read errors. Both selected pages contained exactly 512 FF bytes.
 The original allocator's block chain at 0x54400 identifies five allocated
 0x580-byte blocks followed by a free block starting at 0x55f80 with size
@@ -14,11 +19,8 @@ The original allocator's block chain at 0x54400 identifies five allocated
 not its header or footer. The final footer lies outside the conservative
 read boundary and was not read; it is not claimed verified.
 
-The private tail backup's SHA256 is
-`dcc23b75e95268474d58fe4c11082dbf032320afa6cd82aa12386f4511523852`.
-The primary-settings backup is
-`023f502cf741e4d577b88a2064a3a897fe0c544e61cfc7273cb1a4678b183114`.
-Both are ignored by Git. No serial-number bytes are published.
+Tail and primary-settings backups and their checksums belong in private,
+Git-ignored device-dump metadata. No serial-number bytes are published.
 
 The FF tail inside the primary settings' second page is deliberately **not**
 used: erasing it would also erase existing settings in that same page.
@@ -97,8 +99,8 @@ secondary ASIC and the serial-number pages remain outside write scope.
 cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
+cmake --preset huntsman
+cmake --build --preset huntsman
 # Optional offline ARM dependencies and original reference required:
 python3 -B tools/test_calibration_arm.py \
   build-keyboard-fn-menu/huntsman_firmware.elf --reference /path/to/original.bin

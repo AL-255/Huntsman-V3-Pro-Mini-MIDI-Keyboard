@@ -1,4 +1,9 @@
-# Building and testing from a fresh checkout
+# Building and testing MIDI-Typist from a fresh checkout
+
+Use `huntsman` for the complete physical keyboard or `simulator` for the
+SDK-free desktop reference. Only the Huntsman cross build needs Arm GNU and
+the pinned NXP components. For another keyboard/MCU, follow the
+[porting guide](PORTING.md), including its board-manifest and lifecycle examples.
 
 ## Prerequisites
 
@@ -14,7 +19,7 @@ On Debian-family Linux, packages typically needed are `build-essential`,
 differ from the tested version. Review package installation normally; do not
 put passwords or machine-specific credentials in build scripts.
 
-The firmware uses unmodified, vendored official NXP SDK source subsets. Their
+The Huntsman firmware uses unmodified, vendored official NXP SDK source subsets. Their
 versions came from the MCUXpresso Installer 26.06.123 catalog installed at
 `/home/yukidama/MCUXpressoInstaller` on the development machine. A fresh checkout
 does **not** require that absolute path or reinstalling MCUXpresso: CMake uses
@@ -103,7 +108,7 @@ For linked-ARM USB tests:
 python3 -m venv .venv-audit
 . .venv-audit/bin/activate
 python3 -m pip install -r tools/requirements-audit.txt
-cmake --build --preset keyboard-fn-menu --target audit-usb
+cmake --build --preset huntsman --target audit-usb
 ```
 
 Pinned optional dependencies are Unicorn 2.1.4 and pyelftools 0.33. The USB
@@ -129,12 +134,12 @@ sibling path `../extracted_firmware/raw/Talia_T1_60%_7203_App_FW_v2.1.0_E888780F
 To select another read-only location:
 
 ```sh
-cmake --preset keyboard-fn-menu \
+cmake --preset huntsman \
   -DHUNTSMAN_PRODUCTION_REFERENCE=/absolute/path/to/primary-app.bin
-cmake --build --preset keyboard-fn-menu --target audit-keyboard
-cmake --build --preset keyboard-fn-menu --target audit-lighting
-cmake --build --preset keyboard-fn-menu --target audit-calibration
-cmake --build --preset keyboard-fn-menu --target audit-menu
+cmake --build --preset huntsman --target audit-keyboard
+cmake --build --preset huntsman --target audit-lighting
+cmake --build --preset huntsman --target audit-calibration
+cmake --build --preset huntsman --target audit-menu
 ```
 
 These execute compiled ARM scan/MIDI/LED paths using synthetic optical replies
@@ -151,7 +156,7 @@ operating system's serial-access group/device permissions, and close other
 monitors before connecting. The GUI takes an exclusive advisory lock and does
 not steal a port from another owner. Its transport is Linux/POSIX-specific.
 
-If telemetry rejects the new header, update the GUI to support HKG6. MIDI
+If telemetry rejects HKG6, use the matching GUI from this checkout. MIDI
 mapping requires HKG4 or later, calibration controls HKG5 or later, and parallel
 hold indicators HKG6. The current decoder accepts all six versions. If waiting for neutral,
 release every key; inspect threshold/raw values without repeatedly resetting

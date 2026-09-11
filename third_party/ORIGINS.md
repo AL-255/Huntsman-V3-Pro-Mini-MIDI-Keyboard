@@ -1,6 +1,10 @@
-# Vendored NXP sources
+# MIDI-Typist: vendored NXP sources
 
-The firmware build is self-contained. The files under `third_party/nxp` are
+The Huntsman board build is self-contained. Its board manifest selects the
+NXP components; shared application and synthetic-port sources do not depend
+on this SDK. See [architecture](../docs/ARCHITECTURE.md) and
+[adding another vendor platform](../docs/PORTING.md).
+The files under `third_party/nxp` are
 unmodified source snapshots from the official MCUXpresso SDK repositories.
 They were selected from the MCUXpresso Installer 26.06.123 catalog and pinned
 to the `release/26.06.00-lts` manifest revisions below.
@@ -14,20 +18,20 @@ to the `release/26.06.00-lts` manifest revisions below.
 | `component` | `nxp-mcuxpresso/mcux-component` | `c4fba0f97e0c889b9235b53c686d2d2dcc5defa4` |
 
 The corresponding upstream license texts are in `third_party/licenses`.
-The keyboard application uses `core/drivers/lpc_dma/fsl_dma.{c,h}` from the
+The Huntsman optical transport uses `core/drivers/lpc_dma/fsl_dma.{c,h}` from the
 same pinned core revision (Git blobs `1368c32a5ee68ed70e8a0739d4cb82ae4c219dd8`
 and `379afb1f1b867b023ef5b3867a784a3ee3809390`). This is the LPC descriptor DMA
 driver; the older unused `core/drivers/dma` directory is not selected.
 Application code is covered by the repository's GPL-2.0 license; vendored
 files retain their original SPDX notices and licenses.
 
-The read-only flash investigation adds `core/drivers/iap1/fsl_iap.c` and its
+The flash integration includes `core/drivers/iap1/fsl_iap.c` and its
 four headers from the same pinned core revision. Their Git blob hashes match
 upstream exactly. The ROM wrapper source is **not compiled**.
 The controller-based dumper uses the SDK's flash
-register definitions and status constants, with an application-owned bounded
+register definitions and status constants, with a board-owned bounded
 read-command adapter checked against the original register transactions.
-Calibration adds an independent two-tail-page erase/program adapter, also
+Calibration uses an independent two-tail-page erase/program adapter, also
 compared with executed original instructions. No SDK ROM-call erase/program
 or FFR-write routine is linked. Upstream changelogs and license Markdown remain
 unchanged snapshots of these pinned revisions, not project status documents.

@@ -8,6 +8,8 @@ updater entry must match the actual hardware.
 The supported physical port is the Razer Huntsman V3 Pro Mini/LPC5528.
 The desktop synthetic port exercises a different layout and acquisition model;
 it is not evidence that another commercial keyboard is ready to flash.
+Use the [porting guide](PORTING.md) for a build-manifest pattern, a lifecycle
+adapter example, callback contracts and the new-board acceptance checklist.
 
 ## Source ownership
 
@@ -84,6 +86,8 @@ I2C addresses nor channel order. Clearing/scaling the byte buffer is portable.
 The Huntsman setter retains its recovered channel map; the reference board
 uses contiguous RGB triplets. Hardware framing and transfer snapshots belong
 to the board.
+The application composes global brightness and menu/calibration exceptions
+before submission. Board code must not apply that global scale a second time.
 
 [keyboard_app.h](../firmware/app/include/keyboard_app.h) defines the lifecycle
 and storage hooks. Storage callbacks own erase sizes, slot addresses, record

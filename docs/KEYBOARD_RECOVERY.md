@@ -1,9 +1,14 @@
-# Optical scan and Fn behavior
+# Huntsman optical scan and Fn behavior
 
-The complete `keyboard-fn-menu` application starts scanning and
+The complete `huntsman` application starts scanning and
 keyboard reporting after USB configuration. It uses the recovered optical
 ASIC path and key/action maps, per-key raw Schmitt thresholds, MIDI routing,
 travel lighting and parallel user calibration.
+Optical transport, recovered tables and editor policy belong to
+`firmware/boards/huntsman_v3_pro_mini`; event/menu processing lives in
+`firmware/app`. The [layout adapter](../firmware/boards/huntsman_v3_pro_mini/src/layout_port.c)
+connects them. Addresses below are behavioral reference facts for this board,
+not portable API constants. See [porting](PORTING.md) for another platform.
 
 ## Production reference and entry points
 

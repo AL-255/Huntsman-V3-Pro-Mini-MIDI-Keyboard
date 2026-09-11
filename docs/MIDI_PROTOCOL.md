@@ -1,5 +1,10 @@
 # MIDI and GUI protocol
 
+MIDI event encoding and `cfg` command validation belong to the shared
+application. USB interface numbers, endpoints, HKG6 serialization and ANSI
+JSON geometry below describe the Huntsman port. Other platforms must provide
+their own transport/host adapter; see [porting](PORTING.md).
+
 ## USB-MIDI 1.0
 
 The existing composite descriptors are unchanged: Audio Control interface 1,
@@ -24,7 +29,7 @@ and [sustain ordering](MIDI_DESIGN.md#sustain-pedal).
 
 This is MIDI 1.0, not MIDI 2.0 UMP, MPE, channel pressure or raw UART MIDI.
 Note names are a GUI convention: C0=12, middle C/C4=60. Flat spellings are
-accepted; the GUI displays sharps to match the revised default mapping. Inbound MIDI packets are received
+accepted; the GUI displays sharps to match the default mapping. Inbound MIDI packets are received
 and the existing OUT endpoint is rearmed, but they do not control this
 application's synth, mapping or lights. There is no built-in synthesizer.
 

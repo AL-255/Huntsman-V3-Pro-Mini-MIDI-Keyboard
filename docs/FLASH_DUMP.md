@@ -1,17 +1,21 @@
-# Private, read-only main-flash acquisition
+# Huntsman private, read-only main-flash acquisition
 
-The `keyboard-fn-menu` application includes a bounded CDC
+The `huntsman` application includes a bounded CDC
 flash reader alongside MIDI, lighting and parallel calibration.
 Dump commands are read-only; calibration has separate, tightly bounded
 tail-page write APIs.
 See [write scope and recovery](DEVICE_CONFIG_STORAGE.md).
+The [flash reader](../firmware/boards/huntsman_v3_pro_mini/src/flash_dump.c)
+and HBD1 geometry are board-specific, not a portable MCU memory-access API.
+Another platform needs its own safe read boundary and updater integration;
+see [porting](PORTING.md).
 
 ## Build and use
 
 ```
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu --target audit-dump
+cmake --preset huntsman
+cmake --build --preset huntsman
+cmake --build --preset huntsman --target audit-dump
 python3 -B tools/test_dump_flash.py
 python3 -u tools/dump_flash.py --start 0 --length 0x10000 \
   --output device-dumps/bootloader.device-dump.bin
@@ -110,8 +114,9 @@ read/modify/erase/program/verify. These are storage facts, not copied code.
 
 ## Device readback and backup limits
 
-The application image occupies physical `0x8000..0x28000`; this build still
-requires a hardware update and independent readback. See [validation status](CALIBRATION.md).
+The application image occupies physical `0x8000..0x28000`. Its full readback
+matches the current build without controller/ECC read errors.
+See [validation status](CALIBRATION.md#validation-status).
 Application/configuration acquisitions, endpoint CSV/JSON and their metadata
 are private, Git-ignored files under `device-dumps/`.
 

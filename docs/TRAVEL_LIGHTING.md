@@ -1,10 +1,14 @@
 # Production-derived per-key travel lighting
 
-Travel lighting is included in the `keyboard-fn-menu`
+Travel lighting is included in the `huntsman`
 application. The recovered controller/mapping details below remain applicable;
 see [current validation](CALIBRATION.md#validation-status).
 User calibration supplies independently saved per-key endpoints, but
 optical counts are not a validated linear millimeter or force measurement.
+Travel normalization and effect composition live in `firmware/app`.
+The Huntsman board supplies LED channel placement, bus transactions and upload
+timing. None of the controller addresses below is a generic platform contract;
+see [lighting ports](PORTING.md#5-add-lighting-storage-and-host-integration).
 
 ## Behavior and limits
 
@@ -12,7 +16,7 @@ The `travel-lighting` preset brings up USB first, automatically starts one
 optical scan attempt after USB configuration, then initializes lighting once
 ASIC layout discovery succeeds. It does not require CDC to be opened or a
 `scan start` command. The current complete preset also enables standalone NKRO
-after neutral arming; the original lighting-only preset required `keys on`.
+after neutral arming; the lighting-only preset requires `keys on`.
 Diagnostic/USB-only presets retain their own startup policy.
 
 Each key is white with inverse endpoint-normalized travel: fully lit at rest,
@@ -137,7 +141,7 @@ lighting-off, validity, stale-frame and pending-buffer rules.
 
 The build uses the existing official MCUXpresso Installer-selected NXP source
 snapshots and Arm GNU 14.2.1 toolchain. No vendor sources were modified. LED
-GPIO, clock, FLEXCOMM and I2C operations use the SDK. The old blocking
+GPIO, clock, FLEXCOMM and I2C operations use the SDK. The blocking diagnostic
 `firmware/boards/huntsman_v3_pro_mini/src/lighting.c` is not linked into the application.
 
 Production uses DMA channel 7 and retries/reinitializes on errors. The application
@@ -158,10 +162,10 @@ may remain visible: blacking them cannot be guaranteed over a failed bus.
 ```sh
 cmake --preset host-tests
 cmake --build --preset host-tests
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
+cmake --preset huntsman
+cmake --build --preset huntsman
 cmake --build --preset host-tests --target audit-lighting
-cmake --build --preset keyboard-fn-menu --target audit-lighting
+cmake --build --preset huntsman --target audit-lighting
 ```
 
 The audit targets require the Python dependencies in `tools/requirements-audit.txt`.

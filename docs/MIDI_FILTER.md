@@ -1,12 +1,13 @@
 # MIDI mapping, velocity pop filter and octave indication
 
-The filter, revised map and octave indicators are included in the complete
-`keyboard-fn-menu` application.
+The shared application implements the filter, default map and octave indicators.
+This guide's physical keys, timing examples and commands describe the complete
+`huntsman` build; see [porting](PORTING.md) for different layouts or rates.
 No device access or reset is needed for the offline checks here.
 
 ## Mapping
 
-The root README contains the exact 43-key map requested by the user. The upper
+The [README](../README.md#use-the-keyboard) contains the default 43-key map. The upper
 row spans Tab=C5 (72) through backslash=B6 (95); the lower row spans Left
 Shift=C4 (60) through apostrophe=F#5 (78). These ranges intentionally overlap:
 for example, Tab and M both send C5. Existing duplicate-note ownership rules
@@ -16,7 +17,7 @@ the maximum travel of the held keys mapped to that note.
 Left Shift is identified from its recovered modifier action, not as a printable
 HID usage. It remains Shift in keyboard mode and becomes a configurable C4 note
 in MIDI mode. Fn is a menu control; Right Alt/Ctrl shift octave, Left Ctrl/Alt
-bend pitch down/up, and Left Windows supplies modulation. These controls
+bend pitch down/up, Left Windows supplies modulation, and Space supplies sustain. These controls
 cannot be remapped to notes; wheel values do not use the velocity filter.
 The GUI displays sharp note names and still accepts flat spellings as input.
 It reads mapping state from the device. Importing a host profile replaces
@@ -35,7 +36,8 @@ d3 = y4 - y5
 ```
 
 Decreasing ADC values indicate increasing press depth, so positive differences
-mean positive press velocity. All intervals assume a 1/8000-second duration.
+mean positive press velocity. Intervals use `1 / layout.sample_hz` seconds;
+Huntsman declares 1/8000 second.
 Because their durations are equal, filtering raw differences is equivalent to
 filtering their counts/second rates.
 
@@ -45,14 +47,14 @@ distance from that median. In an exact tie, discard the earliest interval in
 sample order. This deterministic rule applies even when no strong outlier
 exists; it does not introduce an extra noise threshold or discard two values.
 
-Average the remaining three differences, multiply by 8000, then clamp/normalize
+Average the remaining three differences, multiply by the declared scan rate, then clamp/normalize
 to 0…1 using the existing maximum of 4,500,000 counts/s. Fractions are preserved;
 there is no integer division before normalization. The MCU supplies this float
 to the GUI and rounds it to MIDI attack velocity 1…127. Signed nonpositive
 estimates normalize to zero, but Note On still uses at least velocity 1 because
 zero-velocity Note On means Note Off. Aftertouch calculation is unchanged.
 
-Examples (intervals are signed ADC-count differences):
+Examples at Huntsman's declared 8000 Hz (intervals are signed canonical-count differences):
 
 | Four intervals | Discard | Mean of other three | Counts/s |
 | --- | ---: | ---: | ---: |
@@ -79,7 +81,8 @@ independent. The existing 8 kHz assumption is not a measured scan-rate claim.
 capture helper. It prints signed raw counts/s to three decimals, rather than
 normalizing or rounding away the fractional mean. All twenty captured readbacks
 are still printed; filtering changes the velocity estimate, not the data stream.
-The GUI continues to display the float received from firmware without host-side
+The host helper is fixed at 8000 Hz; do not use its velocity result as an oracle
+for a differently timed board without adapting it. The GUI continues to display the float received from firmware without host-side
 filtering. Telemetry uses HKG6.
 
 ## Octave LEDs
@@ -102,10 +105,10 @@ All channels come from the recovered per-profile LED map.
 cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
+cmake --preset huntsman
+cmake --build --preset huntsman
 # Requires the separate read-only production reference and audit dependencies:
-cmake --build --preset keyboard-fn-menu --target audit-keyboard
+cmake --build --preset huntsman --target audit-keyboard
 ```
 
 Tests cover all 43 defaults, Left Shift's two roles, an actual USB-MIDI Note On

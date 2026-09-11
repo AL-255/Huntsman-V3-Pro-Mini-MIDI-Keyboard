@@ -1,6 +1,6 @@
 # Root, scale and playable-note filtering
 
-The complete `keyboard-fn-menu` application supports MIDI-only Fn+E root
+The complete `huntsman` application supports MIDI-only Fn+E root
 selection, Fn+S scale selection and Fn+Left Shift lower-row muting. Defaults
 are C/chromatic, both row groups enabled, raw press 3500/release 3600.
 The [user manual](../USER_MANUAL.md#choose-a-root-and-scale) gives the complete
@@ -28,6 +28,10 @@ To extend a scale, change the scale enum/table, give it a unique selector,
 add its interval oracle to the tests and document it. No per-scale branches
 belong in MIDI rendering or USB code. Porting to another board requires
 adapting physical key lookup/rendering, not rewriting interval membership.
+The shared controller asks `keyboard_action` for base HID semantics and
+`keyboard_lower_group` for row membership, then writes RGB through
+`keyboard_light_set`. No Huntsman key-ID ranges appear in the musical code.
+See [the platform guide](PORTING.md#2-describe-keys-independently-of-scan-order).
 
 ## One rule for notes and lights
 

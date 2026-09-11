@@ -1,9 +1,13 @@
-# USB integration
+# Huntsman USB integration
 
-The complete application exposes NKRO HID, USB-MIDI 1.0, CDC ACM and the
+The complete `huntsman` application exposes NKRO HID, USB-MIDI 1.0, CDC ACM and the
 updater control HID at VID:PID `1532:02b0`. It uses unmodified NXP USB
 classes, DCI/IP3511 and peripheral drivers; integration wrappers are
-application-owned code.
+project-owned platform code in [nxp_lpc55](../firmware/platform/nxp_lpc55).
+Descriptors and updater integration live in the
+[Huntsman board port](../firmware/boards/huntsman_v3_pro_mini).
+The shared application uses send callbacks and has no USB/SDK dependency.
+New MCUs provide their own stack and descriptors; see [porting](PORTING.md).
 
 | Interface | Function |
 | --- | --- |
@@ -48,7 +52,8 @@ Cortex-M33 startup, vector dispatch, clocks, descriptors, full/high-speed
 control and endpoint paths, reset deferral and aligned copies with modeled
 peripherals. It does not execute the bootloader or model electrical reconnect.
 
-The latest complete image has passed application-mode updater entry, flashing,
-USB return and live CDC telemetry on the keyboard; full application readback
-matches the binary. See [validation status](CALIBRATION.md#validation-status).
+The latest complete image passes computer-initiated updater entry, application-only
+flashing, high-speed USB return and live CDC telemetry. Full application
+readback matches the binary, and both calibration pages remain unchanged.
+See [validation status](CALIBRATION.md#validation-status).
 These checks are not USB certification or proof of all MIDI/DAW behavior.

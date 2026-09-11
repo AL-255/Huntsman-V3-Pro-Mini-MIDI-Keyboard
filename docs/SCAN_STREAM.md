@@ -1,7 +1,11 @@
 # Whole-keyboard CDC scan stream
 
+HKS1, ASIC metadata, tick units and the supplied label maps are Huntsman-specific.
+They live in the board-selected NXP transport, outside the shared application.
+Another port must define matching host framing and geometry; see [porting](PORTING.md).
+
 HKS1 whole-keyboard streaming is available in the complete
-`keyboard-fn-menu` application. No periodic USB heartbeat text
+`huntsman` application. No periodic USB heartbeat text
 is emitted.
 
 ## Operation
@@ -105,9 +109,9 @@ USB/read chunk boundaries and skips malformed records/text. Terminal rendering
 ## Build/validation
 
 ```sh
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu --target audit-keyboard
+cmake --preset huntsman
+cmake --build --preset huntsman
+cmake --build --preset huntsman --target audit-keyboard
 ```
 
 The audit uses the optional Python dependencies in `tools/requirements-audit.txt`

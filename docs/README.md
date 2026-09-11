@@ -5,6 +5,20 @@ the [project README](../README.md) for a project overview, and the
 [build guide](BUILDING.md) for a clean checkout. The current complete preset is
 `huntsman` (alias `keyboard-fn-menu`), emitting HKG6 telemetry.
 
+## Choose a reading path
+
+| Your task | Read |
+| --- | --- |
+| Use the supported Huntsman keyboard | [User manual](../USER_MANUAL.md) |
+| Build firmware or run the desktop simulator | [Building](BUILDING.md) |
+| Add a different keyboard or MCU | [Porting guide](PORTING.md), then [architecture](ARCHITECTURE.md) |
+| Choose an owner loop or RTOS task | [Scheduling](SCHEDULING.md) |
+| Integrate host tools | [Protocol](MIDI_PROTOCOL.md) and [GUI limits](KEYBOARD_GUI.md) |
+
+Physical layout, flash addresses, USB identities and HKG/HKS/HKL/HBD formats
+in feature guides describe Huntsman unless explicitly stated otherwise.
+Shared application contracts are documented separately from those wire formats.
+
 ## Current behavior and protocols
 
 - [Fn menu](FN_MENU.md): supported hints, trigger-point editor and brightness.
@@ -28,7 +42,8 @@ the [project README](../README.md) for a project overview, and the
 ## Application and board ports
 
 - [Architecture](ARCHITECTURE.md): shared application, board contracts and compatibility.
-- [Porting guide](PORTING.md): build selection, samples, keys, LEDs, USB and storage.
+- [Porting guide](PORTING.md): build-manifest and lifecycle examples, sample/key
+  contracts, LED/USB/storage ownership, RTOS integration and acceptance checks.
 - [Scheduling](SCHEDULING.md): cooperative ownership and the FreeRTOS tradeoff.
 
 Project-authored documentation describes only the latest build. Update or
@@ -40,7 +55,8 @@ unverified behavior explicit. This is enforced as a contributor rule in
 
 The latest build is validated by native tests and compiled ARM/register models,
 including comparison with original editor instructions and number-row colors.
-The current refactored application has not been flashed or physically validated.
+The application passes computer-initiated flashing, matching full-image
+readback, live CDC/scan health and unchanged calibration-page comparison.
 See [validation limits](CALIBRATION.md#validation-status).
 Tests do not establish physical LED appearance, 8 kHz acquisition, calibrated
 force/distance or comprehensive USB/DAW compliance, and do not flash hardware.

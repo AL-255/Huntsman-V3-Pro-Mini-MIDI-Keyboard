@@ -1,5 +1,10 @@
 # Per-key optical calibration
 
+The parallel calibration state machine is shared by all ports. Physical
+controls, 65-slot RAM sizes, HKG6 fields and flash pages below describe the
+`huntsman` build. A new board supplies sample normalization, endpoint storage
+and LED placement through the [porting contracts](PORTING.md).
+
 In keyboard mode, hold **Fn+C** to preview `CALIBRATION`, then release either
 key to start, or connect the GUI and choose **Calibrate keys
 → device flash**. Keyboard output pauses for the routine. Physical entry
@@ -122,9 +127,15 @@ all layouts, exact Schmitt boundaries, blue lighting, CC64/note ordering,
 queued pedal edges under backpressure, Fn/cleanup rearming and overflow pedal-off.
 These checks do not represent physical root/scale or sustain keypresses.
 
-The current refactored application has not been flashed. Physical application
-readback, live CDC health and calibration-page preservation therefore remain
-unverified for this exact artifact. Tests and builds do not access the device.
+The supplied updater has installed this application through computer-initiated
+bootloader entry. Full 131072-byte readback at physical `0x8000` matches the
+build SHA256 above with no flash-controller/ECC read errors. Both calibration
+tail pages are byte-for-byte unchanged. After reboot, live HKG6 telemetry
+advances with 61 valid sensors, enabled/armed output, calibration generation 0
+(no saved calibration) and zero scan, lighting, MIDI or calibration errors.
+Live readback confirms press 3500 / release 3600 on every sensor. The device
+returns at USB high speed with keyboard, MIDI and CDC interfaces.
+Builds and offline tests themselves do not access the device.
 The SDK-free simulator additionally validates the shared lifecycle with 104
 sensors, a different scan rate and ADC polarity, a wider HID report, layout
 changes and independent parallel calibration.
