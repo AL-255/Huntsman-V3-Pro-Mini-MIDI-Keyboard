@@ -59,7 +59,7 @@ include unchanged values and release; there is no rate limiting, interpolation,
 latest-only replacement or skipped report within the requested interval.
 
 Velocity uses the same bottom-out window as the MCU: the **triggering
-readback** plus the following values, cut before the first sample below 2500,
+readback** plus the following values, cut before the first sample below 1500,
 ten readbacks maximum. The host script computes signed intervals
 `d[i] = y[i] - y[i+1]`, and when more than five samples were collected
 discards the interval furthest from their median (earliest wins ties); shorter

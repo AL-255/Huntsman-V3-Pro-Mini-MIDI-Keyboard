@@ -20,7 +20,7 @@ SCRIPT = str(Path(__file__).with_name('decode_scan_stream.py'))
 
 
 def velocity_line(value):
-    return f'Velocity: {value:+.3f} raw counts/s (up to 10 readbacks incl. trigger, cut before bottom-out 2500; median interval filter only above five samples; assumed 8000 Hz; positive=press)\n'.encode()
+    return f'Velocity: {value:+.3f} raw counts/s (up to 10 readbacks incl. trigger, cut before bottom-out 1500; median interval filter only above five samples; assumed 8000 Hz; positive=press)\n'.encode()
 
 
 def packet(seq, raw=3799, key=3, flags=None, threshold=3800, session=123):
@@ -57,10 +57,10 @@ class LastKeyTests(unittest.TestCase):
         # velocity_window: cut before the bottom-out sample, closed state only
         from last_key_stream import velocity_window, BOTTOM_OUT
         self.assertIsNone(velocity_window([3500,3400,3300]))
-        self.assertEqual(velocity_window([3500,3400,3300,3200,2400]),[3500,3400,3300,3200])
+        self.assertEqual(velocity_window([3500,3400,3300,3200,1400]),[3500,3400,3300,3200])
         self.assertEqual(velocity_window([3500]+[3400]*9),[3500]+[3400]*9)
         self.assertEqual(velocity_window([3500]+[3400]*20),[3500]+[3400]*9)
-        self.assertEqual(velocity_window([3500,2400]),[3500])  # bottom-out on the first follow-up
+        self.assertEqual(velocity_window([3500,1400]),[3500])  # bottom-out on the first follow-up
         self.assertIsNone(velocity_window([3500]))
 
     def test_velocity_pop_filter(self):

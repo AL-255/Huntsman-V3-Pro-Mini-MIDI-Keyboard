@@ -8,7 +8,7 @@
 /* Velocity window: the triggering sample plus up to nine more. A sample
  * below the bottom-out threshold closes the window early (it is excluded),
  * so very fast presses fit on as few as two readbacks. */
-#define RAW_BOTTOM_OUT 2500u
+#define RAW_BOTTOM_OUT 1500u
 #define RAW_VELOCITY_WINDOW 10u
 typedef struct {
     float value;              /* clamp(raw counts/s / 4500000, 0, 1) */

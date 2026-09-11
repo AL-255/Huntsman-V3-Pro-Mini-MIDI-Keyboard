@@ -56,13 +56,13 @@ For every valid full scan, each sensor is processed independently:
    press always owns the window.
 2. Otherwise, while a window is open, append the sample. Close the window
    when ten samples are collected or when a sample crosses below the shared
-   **bottom-out threshold** of 2500 (that sample is excluded).
+   **bottom-out threshold** of 1500 (that sample is excluded).
 3. On close, calculate the fit and update that key's result/counter.
 4. Independently deliver the ordinary HID down/up transition when keyboard
    output is armed. HID key-down is not delayed for velocity acquisition.
 
 ```text
-scan          trigger    +1    +2   ...    +9   (ten samples, or cut at raw<2500)
+scan          trigger    +1    +2   ...    +9   (ten samples, or cut at raw<1500)
 collecting      set  ---------------------------- closed
 fit samples      x0     x1     x2   ...    x9
 ```
@@ -105,8 +105,8 @@ for HID output is separate from these independent per-key velocity gates.
 MIDI buffers each new note and emits the Note On when its key's window closes,
 so the attack velocity is the completed estimate of that press; a window that
 closes without a fit still releases the buffered note with the last value.
-Press thresholds below the bottom-out 2500 make every press bottom out at the
-trigger, so no fit can complete — keep press thresholds above 2500 for
+Press thresholds below the bottom-out 1500 make every press bottom out at the
+trigger, so no fit can complete — keep press thresholds above 1500 for
 meaningful velocity.
 
 ## Telemetry

@@ -142,7 +142,7 @@ static void shift_and_filtered_strike(void)
     assert(raw.engine.report.modifiers==2);
     values[shift]=3900; step(); toggle();
     values[shift]=2400; step();
-    /* The fall keeps the window above the bottom-out 2500; the rise back from
+    /* The fall keeps the window above the bottom-out 1500; the rise back from
      * the 2400 trigger is the pop the median filter discards, leaving the
      * clean 100-counts/sample slope (800000 counts/s -> MIDI velocity 23). */
     const uint16_t points[]={3300,3200,3100,3000,2900,2800,2700,2600,2500};
@@ -203,7 +203,7 @@ static void polyphony(void)
             for(unsigned i=0;i<raw.count;++i) if(play[i]) values[i]=3400-j*(100+i);
             step();
         }
-        for(unsigned i=0;i<raw.count;++i) if(play[i]) values[i]=2400; /* bottom-out closes each five-sample window */
+        for(unsigned i=0;i<raw.count;++i) if(play[i]) values[i]=1400; /* bottom-out closes each five-sample window */
         step();
         drain();
         unsigned ons=0;
@@ -722,6 +722,8 @@ static void music_output(void)
             for(unsigned i=0;i<raw.count;++i) if(midi.mapping[i]!=255) values[i]-=100;
             step();
         }
+        for(unsigned i=0;i<raw.count;++i) if(midi.mapping[i]!=255) values[i]=1400; /* bottom-out closes each window */
+        step();
         drain();
         for(unsigned note=0;note<128;++note) assert(events(0x90,note)==expected[note]);
         uint8_t rgb[LIGHTING_FRAME_SIZE]; memset(rgb,255,sizeof(rgb));

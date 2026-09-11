@@ -288,7 +288,7 @@ Selecting a CDC display does not select keyboard/MIDI performance mode.
 - [SDK source origins and licenses](third_party/ORIGINS.md)
 
 Velocity collects a window from the triggering sample onward — ten readbacks
-maximum, closed early below the shared bottom-out threshold of 2500 — and
+maximum, closed early below the shared bottom-out threshold of 1500 — and
 divides the total drop by the interval count before firmware-side 0…1
 normalization. Windows longer than five samples discard the interval furthest
 from their median first; ties discard the earliest interval.

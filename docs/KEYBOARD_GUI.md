@@ -23,10 +23,11 @@ python3 tools/keyboard_gui.py --device /dev/ttyACM1   # explicit node override
 
 Current application: `build-keyboard-fn-menu/huntsman_firmware.bin`, exactly 131072 bytes,
 linked at `0x20000000`, sha256
-`f037792907acb7cc63c7fa08415c36be32647489e7391e86f3c2e7a10d087e40`
+`451ac53b848777b78d72e53bbd9db9a09b76e525a5a91628af12a722bf8c8394`
 (flashed with the sibling updater's application-only path and verified live:
 GUI telemetry, pinned-sensor stream at ~1.35 k samples/s, stream switch-back,
-bottom-out velocity windows). Original bootloader/update transport is unchanged.
+bottom-out velocity windows at the shared 1500 threshold). Original
+bootloader/update transport is unchanged.
 
 The Linux GUI uses Python's standard library and Tk (`python3-tk` must be
 installed). No pip packages are required. Your user needs access to the CDC
@@ -153,7 +154,7 @@ or toggling the mode clears the capture.
 
 Because the capture is full-rate, the GUI reproduces the firmware's velocity
 window exactly: the triggering point plus the following readbacks, cut before
-the first sample below the shared bottom-out threshold of 2500 (ten maximum),
+the first sample below the shared bottom-out threshold of 1500 (ten maximum),
 total drop divided by the interval count, with the median interval filter only
 when more than five samples were collected. A dashed green **fitted line**
 anchored at the trigger point marks the measured velocity as a straight slant

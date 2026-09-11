@@ -172,7 +172,7 @@ class App:
         for raw in samples: self.capture.feed_sample(raw,press,release)
         if self.capture.velocity is None and len(self.capture.points) >= 2:
             # Mirror the device fit: up to ten points from the trigger, cut
-            # before the bottom-out sample (2500); median interval filter only
+            # before the bottom-out sample (1500); median interval filter only
             # when more than five samples were collected.
             window = velocity_window(self.capture.points)
             if window is not None and len(window) >= 2:

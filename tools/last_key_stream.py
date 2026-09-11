@@ -6,7 +6,7 @@ import time
 
 SIZE = 20
 ASSUMED_SCAN_HZ = 8000
-BOTTOM_OUT = 2500      # velocity window closes below this raw value (excluded)
+BOTTOM_OUT = 1500      # velocity window closes below this raw value (excluded)
 VELOCITY_WINDOW = 10   # maximum readbacks per fit, triggering sample included
 
 

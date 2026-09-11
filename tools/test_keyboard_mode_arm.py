@@ -218,7 +218,7 @@ def midi_tests(args):
     # threshold after two intervals, so the fit closes on three samples.
     values=dev.raw.copy(); values[labels.index('LSh')]=3500
     one_raw_frame(dev,values)
-    for v in (3400,3300,2300,2200,2100):
+    for v in (3400,3300,1400,1200,1100):
         values[labels.index('LSh')]=v; one_raw_frame(dev,values)
     dev.service(30)
     assert bytes([9,0x90,60,23]) in dev.midi_packets
@@ -311,10 +311,10 @@ def velocity_tests(args):
     dev.raw[0] = 3701; s = snapshot(dev); assert s.velocity_state[0] & 1
 
     # Bottom-out cut: a very fast press fits on four samples (no median
-    # filter), and the below-2500 sample that closes it is excluded.
+    # filter), and the below-1500 sample that closes it is excluded.
     baseline = snapshot(dev).captures[0]  # raw[0] = 3701: release rearm only
     values = dev.raw.copy(); values[0] = 3500; one_raw_frame(dev,values)  # trigger
-    for value in (3200,2900,2600,2400):
+    for value in (3200,2900,2600,1400):
         values = dev.raw.copy(); values[0] = value; one_raw_frame(dev,values)
     s = snapshot(dev)
     assert s.captures[0] == baseline+1 and abs(s.velocity[0] - 2400000/4500000) < 1e-7, (s.velocity[0],s.captures[0])
@@ -349,7 +349,7 @@ def velocity_tests(args):
         for value in points:
             values = dev.raw.copy(); values[0] = value; one_raw_frame(dev,values)
         if bottom:
-            values = dev.raw.copy(); values[0] = 2400; one_raw_frame(dev,values)
+            values = dev.raw.copy(); values[0] = 1400; one_raw_frame(dev,values)
         s = snapshot(dev)
         expected = max(0,min(1,raw_speed/4500000))
         assert type(s.velocity[0]) is float and abs(s.velocity[0]-expected) < 1e-7, (points,s.velocity[0],expected,s.captures[0],baseline)
@@ -374,7 +374,7 @@ def velocity_tests(args):
         for j in range(4):
             value -= spike if j == 2 else 10
             values = dev.raw.copy(); values[0] = value; one_raw_frame(dev,values)
-        values = dev.raw.copy(); values[0] = 2400; one_raw_frame(dev,values)  # bottom-out closes the five-sample window
+        values = dev.raw.copy(); values[0] = 1400; one_raw_frame(dev,values)  # bottom-out closes the five-sample window
         s = snapshot(dev)
         assert abs(s.velocity[0] - max(0,min(1,(30+spike)/4*8000/4500000))) < 1e-7
     for expected,samples in ((90000,[3500,3500,3490,3480,3470,3460,3450,3440,3430,3410]),

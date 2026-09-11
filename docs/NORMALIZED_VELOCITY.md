@@ -5,7 +5,7 @@ it over HKG6; see [current validation](CALIBRATION.md#validation-status).
 
 The keyboard collects a velocity window from the triggering sample onward
 (ten readbacks maximum, closed early by the shared bottom-out threshold of
-2500), computes the total drop divided by the interval count at the
+1500), computes the total drop divided by the interval count at the
 board-declared rate, discards the furthest median interval only when more
 than five samples were collected
 ([details](MIDI_FILTER.md)), then stores:

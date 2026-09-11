@@ -30,7 +30,7 @@ readbacks that starts at the **triggering sample** (the first below the key's
 press threshold) and grows until one of:
 
 - ten readbacks are collected, or
-- a readback crosses below the shared **bottom-out threshold** of 2500; that
+- a readback crosses below the shared **bottom-out threshold** of 1500; that
   sample closes the window and is excluded, so very fast presses fit on as
   few as two readbacks.
 
@@ -79,7 +79,7 @@ The existing 8 kHz assumption is not a measured scan-rate claim.
 
 `decode_scan_stream.py --last-key` collects the same window in the host
 capture helper (triggering readback plus following values, cut before the
-first below-2500 readback, ten maximum) and applies the same median-interval
+first below-1500 readback, ten maximum) and applies the same median-interval
 gate. It prints signed raw counts/s to three decimals, rather than normalizing
 or rounding away the fractional mean. All captured readbacks are still
 printed; filtering changes the velocity estimate, not the data stream.

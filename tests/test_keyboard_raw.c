@@ -83,7 +83,7 @@ static void velocity_history_oracle(void)
     for (unsigned frame = 0; frame < 256; ++frame) {
         for (unsigned i = 0; i < 65; ++i) {
             random = random*1664525u + 1013904223u;
-            values[i] = 2000 + random%1601; /* 2000..3600: crosses press, release and bottom-out */
+            values[i] = 1200 + random%2401; /* 1200..3600: crosses press, release and bottom-out */
             const bool next = down[i] ? values[i] <= 3300 : values[i] < 3000;
             const bool trigger = next && !down[i];
             if (values[i] > 3300) ready[i] = true;
@@ -94,7 +94,7 @@ static void velocity_history_oracle(void)
                 window[i][0] = values[i];
             }
             else if (pending[i]) {
-                if (values[i] < 2500) { /* bottom-out closes without this sample */
+                if (values[i] < 1500) { /* bottom-out closes without this sample */
                     if (count[i] >= 2u) { last[i] = window_oracle(window[i], count[i]); ++completed[i]; }
                     pending[i] = false; count[i] = 0u;
                 }
@@ -153,13 +153,13 @@ static void velocity_tests(void)
     assert(!keys.velocity[0].pending);
 
     /* Bottom-out cut: a very fast press fits on four samples (m=4, no
-     * median filter), and the below-2500 sample that closes it is excluded. */
+     * median filter), and the below-1500 sample that closes it is excluded. */
     values[0] = 3500; keyboard_raw_frame(&keys, values, 65, 3, true);
     values[0] = 3200; keyboard_raw_frame(&keys, values, 65, 3, true);
     values[0] = 2900; keyboard_raw_frame(&keys, values, 65, 3, true);
     values[0] = 2600; keyboard_raw_frame(&keys, values, 65, 3, true);
     assert(keys.velocity[0].pending && keys.velocity[0].captures == 1);
-    values[0] = 2400; keyboard_raw_frame(&keys, values, 65, 3, true);
+    values[0] = 1400; keyboard_raw_frame(&keys, values, 65, 3, true);
     assert(!keys.velocity[0].pending && keys.velocity[0].captures == 2);
     check_velocity(keys.velocity[0].value, 900.0/3.0*8000.0);
     assert(keys.velocity[1].captures == 1); /* other keys still collecting their own windows */
@@ -203,7 +203,7 @@ static void velocity_tests(void)
 static void velocity_clamp_tests(void)
 {
     /* Trigger, window samples, and whether a below-bottom-out sample closes
-     * the window early. All window values stay above the bottom-out 2500. */
+     * the window early. All window values stay above the bottom-out 1500. */
     struct {
         uint16_t points[9];
         unsigned count;
@@ -224,7 +224,7 @@ static void velocity_clamp_tests(void)
         for (unsigned i = 0; i < 61; ++i) raw[i] = 3900;
         frame(); raw[32] = 3500; frame(); /* trigger */
         for (unsigned i = 0; i < fixtures[k].count; ++i) { raw[32] = fixtures[k].points[i]; frame(); }
-        if (fixtures[k].bottom) { raw[32] = 2400; frame(); } /* closes without this sample */
+        if (fixtures[k].bottom) { raw[32] = 1400; frame(); } /* closes without this sample */
         assert(s.velocity[32].valid && s.velocity[32].captures == 1);
         check_velocity(s.velocity[32].value, fixtures[k].raw);
         if (k < 2) assert(s.velocity[32].value == 0.0f);
@@ -262,7 +262,7 @@ static void pop_filter_tests(void)
             value -= j==2 ? spike : 10;
             raw[32]=(uint16_t)value; frame();
         }
-        raw[32]=2400; frame(); /* bottom-out closes the five-sample window */
+        raw[32]=1400; frame(); /* bottom-out closes the five-sample window */
         check_velocity(s.velocity[32].value,(30.0+spike)/4.0*8000.0);
     }
     /* Earliest interval wins equal-distance ties in the filtered window. */
@@ -284,7 +284,7 @@ static void pop_filter_tests(void)
         frame(); raw[32]=3500; frame();
         const uint16_t six[] = {3490,3480,3470,3460,3450};
         for (unsigned j=0;j<5;++j) { raw[32]=six[j]; frame(); }
-        raw[32]=2400; frame(); /* bottom-out closes the six-sample window */
+        raw[32]=1400; frame(); /* bottom-out closes the six-sample window */
         check_velocity(s.velocity[32].value,80000);
     }
     puts("PASS pop filter: filtered ten-sample windows at every glitch position; five-sample windows unfiltered; earliest tie wins");

@@ -501,7 +501,7 @@ Space continues to type a normal space.
 
 Each key independently collects a velocity window from the first sample
 **below** its press threshold. The window holds up to ten readbacks and closes
-early when the key crosses the shared bottom-out threshold of 2500 (that
+early when the key crosses the shared bottom-out threshold of 1500 (that
 sample is excluded), so very fast presses fit on only a few samples. The
 firmware divides the total drop by the number of intervals; windows longer
 than five samples discard the interval furthest from their median first.
@@ -514,7 +514,7 @@ The calculation assumes 8000 scans/s. Actual 8 kHz hardware acquisition has
 not been established, so this is not a calibrated speed in distance/time.
 Very short taps still produce ordered Note On/Off once the window closes,
 but the resulting sound may be very short or inaudible. Keep press thresholds
-above 2500: below the bottom-out threshold no window can collect a fit.
+above 1500: below the bottom-out threshold no window can collect a fit.
 
 ## 9. Use the configuration GUI
 
