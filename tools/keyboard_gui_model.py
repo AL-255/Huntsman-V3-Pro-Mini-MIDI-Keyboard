@@ -214,6 +214,73 @@ def note_name(note):
     return 'Off' if note == 255 else f'{("C","C#","D","D#","E","F","F#","G","G#","A","A#","B")[note%12]}{note//12-1}'
 
 
+CAPTURE_POINTS = 20
+
+
+class KeystrokeCapture:
+    """Holds the first CAPTURE_POINTS samples of the latest keystroke.
+
+    Armed until the watched key reports a down edge; the triggering sample
+    becomes sample zero and every following sample appends one more. A new
+    down edge always restarts the capture (latest keystroke wins), and the
+    collected points are held — feed() returns False — until that happens.
+    feed() consumes telemetry frames with the device-reported down state and
+    velocity fit; feed_sample() consumes full-rate key-stream readbacks and
+    applies the key's Schmitt pair itself, so samples 1..5 after the trigger
+    match the device velocity window exactly (host-side fit stored in
+    ``velocity``). The device fit counter attribution applies to telemetry
+    frames: the fit whose completion counter first rises after the trigger
+    belongs to this keystroke (normally already present in the triggering
+    snapshot at the 33 ms telemetry throttle).
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.points = []
+        self.prev_down = None  # None: adopt the next frame as baseline, never trigger
+        self.fit = None      # (captures, velocity) of the keystroke's fit, if any
+        self.velocity = None # host-computed raw counts/s (8 ksps captures)
+        self.captures0 = None
+        self.done = False
+        self.armed = True
+
+    def feed(self, raw, down, captures=None, velocity=None, fit_valid=False):
+        """Consume one frame; return True when the waveform should refresh."""
+        edge = down and self.prev_down is False
+        self.prev_down = down
+        if edge:
+            self.points = [raw]
+            self.captures0 = captures
+            self.fit = None
+            self.velocity = None
+            self.done = False
+            self.armed = False
+            return True
+        if self.done or self.armed:
+            return False  # held or still waiting; the waveform stays frozen
+        self.points.append(raw)
+        if (self.fit is None and captures is not None and self.captures0 is not None
+                and captures > self.captures0):
+            self.fit = (captures, velocity)
+        if len(self.points) >= CAPTURE_POINTS:
+            if self.fit is None and fit_valid and captures is not None:
+                self.fit = (captures, velocity)
+            self.done = True
+        return True
+
+    def feed_sample(self, raw, press, release):
+        """Consume one full-rate (8 ksps) key-stream sample.
+
+        The down state uses the selected key's Schmitt pair; every sample is
+        appended to an active capture so the trigger sample and the five
+        following readbacks match the device velocity window exactly.
+        """
+        down = (raw < press) if not self.prev_down else (raw <= release)
+        return self.feed(raw, down)
+
+
 def parse_note(text):
     text = text.strip()
     if text.lower() in ('off','none','unmapped'): return 255

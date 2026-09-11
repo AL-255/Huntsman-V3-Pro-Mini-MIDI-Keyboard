@@ -1,13 +1,13 @@
 # Per-key velocity and apply-all thresholds
 
-Current firmware is `keyboard-fn-menu` with HKG6, normalized float
+The `huntsman` build provides HKG6, normalized float
 velocity and the four-interval pop filter. See [MIDI design](MIDI_DESIGN.md)
 and [current validation](CALIBRATION.md#validation-status).
 
 ```sh
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
-python3 tools/keyboard_gui.py --device /dev/ttyACM0
+cmake --preset huntsman
+cmake --build --preset huntsman
+python3 tools/keyboard_gui.py        # auto-detects the 1532:02b0 CDC port
 ```
 
 Use `build-keyboard-fn-menu/huntsman_firmware.bin` for an authorized
@@ -32,7 +32,9 @@ The GUI never computes actual-device velocity from its decimated snapshots.
 
 ## Data structure and scan flow
 
-There is one `keyboard_velocity_t` per supported sensor (65 maximum):
+The shared [raw engine](../firmware/app/src/keyboard_raw.c) owns one
+`keyboard_velocity_t` per configured sensor slot: `MT_KEY_CAPACITY`,
+65 in the Huntsman build and 128 by default for other ports.
 
 | Storage | Purpose |
 | --- | --- |
@@ -77,16 +79,19 @@ The calculation uses the same raw estimator as `press_velocity()` in
 ```text
 intervals = [y1-y2, y2-y3, y3-y4, y4-y5]
 discard the interval furthest from median(intervals), earliest on ties
-raw_velocity = mean(remaining three intervals) * 8000
+raw_velocity = mean(remaining three intervals) * layout.sample_hz
 velocity = clamp(raw_velocity / 4500000, 0, 1)
 ```
 
-It assumes samples are spaced at **8000 Hz**, by definition. Positive
+The Huntsman descriptor declares **8000 Hz**; another board supplies its own
+acquisition rate. The host capture tool retains its fixed Huntsman 8 kHz
+assumption, so it matches the MCU only at that declared rate. Positive
 raw velocity means decreasing readback (pressing); negative raw estimates
 normalize to zero. Zero is a valid result. Fractional means are retained before
 normalization; see [filter details](MIDI_FILTER.md).
 These are not calibrated millimeters/second. MIDI maps the normalized float
-to attack velocity 1–127. Using the fixed 8 kHz assumption does not claim or establish an 8 kHz scan rate.
+to attack velocity 1–127. A descriptor's rate does not establish measured
+hardware cadence. See [sampling contracts](PORTING.md#3-acquire-real-analog-samples).
 
 Startup/invalid scans, USB reset and configuration/enable changes invalidate
 results, cancel all pending fits and require a new observed release for each
@@ -129,7 +134,7 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 python3 -B tools/test_keyboard_gui_tk.py
-cmake --build --preset keyboard-fn-menu --target audit-lighting
+cmake --build --preset huntsman --target audit-lighting
 ```
 
 Coverage: 65 simultaneous different slopes; equality/release gating; three

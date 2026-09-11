@@ -10,8 +10,9 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from keyboard_gui_model import Snapshot, ansi_geometry, profile_from_snapshot, validate_pair, validate_profile, note_name, parse_note, MIDI_CONTROLS
-from keyboard_gui_transport import Connection
+from keyboard_gui_model import Snapshot, ansi_geometry, profile_from_snapshot, validate_pair, validate_profile, note_name, parse_note, MIDI_CONTROLS, CAPTURE_POINTS, KeystrokeCapture
+from keyboard_gui_transport import Connection, find_cdc_device, USB_VENDOR_ID, USB_PRODUCT_ID
+from last_key_stream import press_velocity
 
 
 class App:
@@ -24,6 +25,11 @@ class App:
         self.items = {}
         self.titles = {}
         self.history = deque(maxlen=180)
+        self.capture = KeystrokeCapture()
+        self.hold_mode = tk.BooleanVar(value=False)
+        self.key_capture = False  # full-rate per-key stream active
+        self.capture_rate = 0.0   # measured samples/s of the active key stream
+        self._rate_count = 0; self._rate_at = None
         self.last_sequence = None
         self.initial_fields = False
         root.title('Huntsman • Keyboard configuration')
@@ -40,6 +46,8 @@ class App:
         bar = ttk.Frame(outer); bar.pack(fill='x')
         self.device = tk.StringVar(value=device)
         ttk.Entry(bar,textvariable=self.device,width=25).pack(side='left')
+        self.detect_button = ttk.Button(bar,text='Detect',command=self.detect)
+        self.detect_button.pack(side='left',padx=(6,0))
         self.connect_button = ttk.Button(bar,text='Connect',command=self.toggle_connection)
         self.connect_button.pack(side='left',padx=6)
         self.enable_button = ttk.Button(bar,text='Enable keyboard',command=lambda:self.enable(True))
@@ -49,7 +57,9 @@ class App:
         ttk.Button(bar,text='Save profile…',command=self.save_profile).pack(side='right',padx=3)
         self.load_button = ttk.Button(bar,text='Load + apply profile…',command=self.load_profile)
         self.load_button.pack(side='right',padx=3)
-        self.status = tk.StringVar(value='DEMO — no device access' if demo else 'Disconnected — connect to keyboard-gui firmware')
+        self.status = tk.StringVar(value=('DEMO — no device access' if demo else
+            'Disconnected — press Connect to use the detected device' if device else
+            f'Disconnected — no {USB_VENDOR_ID:04x}:{USB_PRODUCT_ID:04x} CDC device detected; click Detect'))
         ttk.Label(outer,textvariable=self.status,wraplength=1100).pack(anchor='w',pady=(12,4))
         self.canvas = tk.Canvas(outer,height=270,bg='#101820',highlightthickness=0)
         self.canvas.pack(fill='x'); self.canvas.bind('<Configure>',lambda _:self.draw())
@@ -89,8 +99,15 @@ class App:
         self.midi_button = ttk.Button(midi_row,text='Apply MIDI mapping',command=self.apply_midi)
         self.midi_button.pack(side='left',padx=6)
         ttk.Label(panel,text='Fn+Enter: keyboard ↔ MIDI; RAlt/RCtrl: octave −/+\nLCtrl/LAlt: pitch −/+; LWin: modulation\nSpace: sustain (CC64), uses key thresholds\nWheels: raw 3800 = 0%, 1000 = 100%\nMIDI channel 1; C4=60. Notes/Off configurable.\nRAM-only; host JSON export includes MIDI mappings.\nConfig edits release keys/notes and wait for neutral.',justify='left').pack(anchor='w')
-        self.graph = tk.Canvas(lower,height=200,bg='#17232d',highlightthickness=0)
-        self.graph.pack(side='right',fill='both',expand=True)
+        plot = ttk.Frame(lower); plot.pack(side='right',fill='both',expand=True)
+        holdbar = ttk.Frame(plot); holdbar.pack(fill='x',pady=(0,4))
+        self.hold_button = ttk.Checkbutton(holdbar,text=f'Hold first {CAPTURE_POINTS} pts of keystroke',
+                                           variable=self.hold_mode,command=self.toggle_hold)
+        self.hold_button.pack(side='left')
+        self.hold_status = tk.StringVar(value='')
+        ttk.Label(holdbar,textvariable=self.hold_status).pack(side='left',padx=8)
+        self.graph = tk.Canvas(plot,height=200,bg='#17232d',highlightthickness=0)
+        self.graph.pack(fill='both',expand=True)
         root.protocol('WM_DELETE_WINDOW',self.close)
         if demo: self.connect_button.configure(state='disabled')
         self.update()
@@ -112,7 +129,7 @@ class App:
         self.paint()
 
     def select(self,index):
-        self.selected = index; self.history.clear()
+        self.selected = index; self.history.clear(); self.capture.reset()
         label = next(k.label for k in self.keys if k.sensor == index)
         self.key_title.set(f'{label}  /  sensor {index}')
         if self.snapshot and self.snapshot.count == 61:
@@ -122,9 +139,74 @@ class App:
 
     def usable(self,allow_calibration=False):
         return bool(not self.demo and self.connection and self.connection.connected and self.snapshot and
+                    self.connection.stream_mode == 'gui' and
                     (allow_calibration or not self.snapshot.calibration_flags & 1) and
                     self.snapshot.profile == 1 and self.snapshot.count == 61 and
                     self.connection.snapshot() and time.monotonic()-self.connection.snapshot()[0] < 1)
+
+    def toggle_hold(self):
+        self.capture.reset()
+
+    def sync_hold_stream(self):
+        """Engage/disengage the full-rate per-key stream to match hold mode."""
+        connection = self.connection
+        if self.demo or not connection or not connection.is_alive(): return
+        calibration = bool(self.snapshot and self.snapshot.calibration_flags & 1)
+        if self.hold_mode.get() and connection.connected and not calibration:
+            if connection.stream_mode != 'key' or connection.key_sensor != self.selected:
+                self.capture.reset()
+                self.capture_rate = 0.0; self._rate_count = 0; self._rate_at = None
+                threshold = self.snapshot.press[self.selected] if self.snapshot and self.snapshot.count == 61 else 3500
+                connection.stream_key(threshold,self.selected)
+        elif connection.stream_mode == 'key':
+            connection.stream_gui()
+            self.capture_rate = 0.0; self._rate_count = 0; self._rate_at = None
+
+    def pump_key_samples(self,s):
+        if not self.connection or s.count != 61: return
+        samples = self.connection.drain_samples()
+        if not samples: return
+        press,release = s.press[self.selected],s.release[self.selected]
+        for raw in samples: self.capture.feed_sample(raw,press,release)
+        if self.capture.velocity is None and len(self.capture.points) >= 6:
+            # Samples 1..5 after the trigger: the device's own velocity window.
+            self.capture.velocity = press_velocity(tuple(self.capture.points[1:6]))
+        self._rate_count += len(samples)
+        if self._rate_at is None: self._rate_at = time.monotonic()
+        elapsed = time.monotonic()-self._rate_at
+        if elapsed >= .5:
+            self.capture_rate = self._rate_count/elapsed
+            self._rate_count = 0; self._rate_at = time.monotonic()
+
+    def paint_hold(self,w,h):
+        cap = self.capture
+        if self.key_capture:
+            suffix = f' @ {self.capture_rate:,.0f} Hz' if self.capture_rate else ' @ full scan rate'
+        else:
+            suffix = ''
+        if cap.armed:
+            self.graph.create_text(w/2,h/2,
+                text=f'Armed — press the selected key to hold its first {CAPTURE_POINTS} points{suffix}',
+                fill='#9cafbc',font=('sans',11))
+            self.hold_status.set('Armed — waiting for a keystroke trigger'+suffix)
+            return
+        span = CAPTURE_POINTS-1
+        coords = [(2+i/span*(w-4),h-15-v/4096*(h-30)) for i,v in enumerate(cap.points)]
+        if len(cap.points) > 1:
+            self.graph.create_line(*[c for xy in coords for c in xy],fill='#e9f0f4',width=2)
+        for i,(x,y) in enumerate(coords):
+            self.graph.create_oval(x-2,y-2,x+2,y+2,fill='#f1a366' if i == 0 else '#e9f0f4',outline='')
+        for i in range(0,CAPTURE_POINTS,5):
+            self.graph.create_text(2+i/span*(w-4),h-3,text=str(i),fill='#9cafbc',font=('monospace',8))
+        state = f'{"held" if cap.done else "capturing"} • {len(cap.points)}/{CAPTURE_POINTS} points{suffix}'
+        if cap.velocity is not None:
+            normalized = 0.0 if cap.velocity <= 0 else 1.0 if cap.velocity >= 4500000 else cap.velocity/4500000.0
+            state += f' • velocity {normalized:.4f} [0–1] ({cap.velocity:,.0f} counts/s; assumed 8 kHz)'
+        elif cap.fit:
+            state += f' • device velocity {cap.fit[1]:.4f} [0–1] (fit {cap.fit[0]})'
+        elif cap.done:
+            state += ' • no velocity measured'
+        self.hold_status.set(state)
 
     def paint(self,stale=False):
         s = self.snapshot
@@ -172,17 +254,38 @@ class App:
                 y = h-15-value/4096*(h-30)
                 self.graph.create_line(0,y,w,y,fill=color,dash=(4,4))
                 self.graph.create_text(6,y+10 if title == 'press' else y-10,anchor='w',text=f'{title} {value}',fill=color)
-        if len(self.history)>1:
-            points = []
-            for i,value in enumerate(self.history): points.extend((i/(len(self.history)-1)*(w-2),h-15-value/4096*(h-30)))
-            self.graph.create_line(*points,fill='#e9f0f4',width=2)
+        if self.hold_mode.get():
+            self.paint_hold(w,h)
+        else:
+            self.hold_status.set('')
+            if len(self.history)>1:
+                points = []
+                for i,value in enumerate(self.history): points.extend((i/(len(self.history)-1)*(w-2),h-15-value/4096*(h-30)))
+                self.graph.create_line(*points,fill='#e9f0f4',width=2)
+
+    def detect(self):
+        path = find_cdc_device()
+        if path:
+            self.device.set(path)
+            self.message.set(f'Detected {path} (USB {USB_VENDOR_ID:04x}:{USB_PRODUCT_ID:04x}); press Connect.')
+        else:
+            self.device.set('')
+            self.message.set(f'No USB {USB_VENDOR_ID:04x}:{USB_PRODUCT_ID:04x} CDC device detected; check the cable and udev permissions.')
 
     def toggle_connection(self):
         if self.connection and self.connection.is_alive():
             self.connection.stop(); self.message.set('Disconnecting…'); return
-        self.connection = Connection(self.device.get().strip())
+        path = self.device.get().strip()
+        if not path or path.lower() == 'auto':
+            path = find_cdc_device()
+            if not path:
+                messagebox.showerror('Detect',f'No USB {USB_VENDOR_ID:04x}:{USB_PRODUCT_ID:04x} CDC device detected.\n\n'
+                    'Plug in the keyboard, wait for the CDC port, or enter a device node (e.g. /dev/ttyACM0) and connect again.')
+                return
+            self.device.set(path)
+        self.connection = Connection(path)
         self.initial_fields = False; self.snapshot = None; self.last_sequence = None
-        self.connection.start(); self.message.set('Connecting; requesting GUI stream and acknowledged readback…')
+        self.connection.start(); self.message.set(f'Connecting to {path}; requesting GUI stream and acknowledged readback…')
 
     def calibrate(self):
         if not self.usable() or self.snapshot.version < 5 or self.snapshot.performance_mode: return
@@ -283,12 +386,29 @@ class App:
                 except queue.Empty: break
             self.connect_button.configure(text='Disconnect' if self.connection.is_alive() else 'Connect')
         s = self.snapshot
+        self.sync_hold_stream()
+        self.key_capture = not self.demo and bool(self.connection and self.connection.is_alive() and self.connection.stream_mode == 'key')
         if s:
             if s.count == 61 and not self.initial_fields:
                 self.select(self.selected); self.initial_fields = True
+            if self.hold_mode.get() and not self.demo:
+                self.pump_key_samples(s)
             if s.sequence != self.last_sequence and s.count == 61 and not stale:
-                self.history.append(s.raw[self.selected]); self.last_sequence = s.sequence
+                self.last_sequence = s.sequence
+                if self.hold_mode.get() and self.demo:
+                    if s.version >= 2:
+                        captures = s.captures[self.selected]
+                        velocity = s.velocity[self.selected]
+                        fit_valid = bool(s.velocity_state[self.selected] & 2)
+                    else:
+                        captures = velocity = None; fit_valid = False
+                    self.capture.feed(s.raw[self.selected],s.down[self.selected],captures,velocity,fit_valid)
+                elif not self.hold_mode.get():
+                    self.history.append(s.raw[self.selected])
             state = 'STALE / disconnected' if stale else 'REPORTING' if s.flags & 2 else 'Waiting for all keys released' if s.flags & 1 else 'Keyboard disabled'
+            if self.key_capture:
+                rate = f' {self.capture_rate:,.0f} samples/s' if self.capture_rate else ''
+                state = f'KEYSTROKE CAPTURE{rate} • press the selected key (telemetry paused)'
             if not stale and s.mode: state = f'Legacy FN editor {s.mode} — Escape to exit; use GUI for raw thresholds'
             if s.version >= 4:
                 state += f' | {"MIDI" if s.performance_mode else "KEYBOARD"} | octave {s.octave:+d} | MIDI errors={s.midi_errors}'
@@ -327,10 +447,12 @@ class App:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--device',default='/dev/ttyACM0')
+    parser.add_argument('--device',default='auto',
+                        help=f"CDC device node, or 'auto' (default) to detect USB {USB_VENDOR_ID:04x}:{USB_PRODUCT_ID:04x}")
     parser.add_argument('--demo',action='store_true',help='visual demo only; never opens a device')
     args = parser.parse_args()
-    root = tk.Tk(); App(root,args.device,args.demo); root.mainloop()
+    device = '' if args.demo else (find_cdc_device() if args.device == 'auto' else args.device)
+    root = tk.Tk(); App(root,device,args.demo); root.mainloop()
 
 
 if __name__ == '__main__': main()

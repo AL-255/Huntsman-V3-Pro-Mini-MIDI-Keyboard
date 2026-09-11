@@ -1,12 +1,15 @@
-# Keyboard user manual
+# MIDI-Typist keyboard user manual
 
-Huntsman V3 Pro Mini with the custom **`keyboard-fn-menu` firmware**.
+For the **Huntsman V3 Pro Mini**, using the complete **`huntsman` firmware**
+(also available as `keyboard-fn-menu`).
 
 This manual covers the keyboard as it works now: typing, MIDI performance,
 lighting, calibration, the configuration GUI, and troubleshooting. All
 illustrations are embedded text; no images, downloads, or special Markdown
 extensions are needed. The layout drawings show the **61-key ANSI model**.
 Key names refer to the physical keycaps, even when their output is different.
+This is the Huntsman operating guide, not a layout promise for other hardware.
+Developers adding a keyboard or MCU should use the [platform porting guide](docs/PORTING.md).
 
 ## Contents
 
@@ -516,8 +519,14 @@ standard library; no pip packages are needed. Run commands from the repository
 root. Install your distribution's Python Tk package if it is missing.
 
 ```sh
-python3 tools/keyboard_gui.py --device /dev/ttyACM0
+python3 tools/keyboard_gui.py
 ```
+
+This auto-detects the keyboard's CDC port by its USB identity (`1532:02b0`).
+Pass an explicit node with `--device` (for example
+`python3 tools/keyboard_gui.py --device /dev/ttyACM1`) if several matching
+boards are connected or detection finds nothing. **Detect** reruns the scan,
+and **Connect** also runs it when the device field is empty or `auto`.
 
 Use the actual device path if it differs. Your account needs serial-port
 read/write permission; do not run the configuration GUI as root. Close other
@@ -554,6 +563,17 @@ purple/blue/amber/green colors. Raw numbers are live readings, while velocity
 is the last completed fit. The GUI refreshes about 30 times/s; this does
 not set the keyboard's scan rate. Its submitted NKRO report is a diagnostic
 view, not proof that an application received a keystroke.
+
+Checking **Hold first 20 pts of keystroke** above the plot changes it from
+the scrolling waveform to a held per-keystroke capture for velocity-curve
+tuning: the GUI switches the device to a full-rate per-key stream (every
+optical scan frame — the fastest rate the keyboard produces, about
+1.35 k samples/s on this hardware; the keyboard drawing pauses while it is
+active) and holds the first 20 samples after the selected key's trigger, with
+the trigger sample marked in orange. The firmware's velocity fit is
+reproduced from the same five-sample window the device uses and shown as
+counts/s and 0–1. A new press replaces the held capture; changing the
+selected key or unchecking the mode clears it and restores live telemetry.
 
 The GUI supports editing the ANSI/61-key layout. Firmware also handles
 ISO/62 and JIS/65, but the GUI rejects those layouts rather than placing
@@ -756,7 +776,8 @@ achieved until that condition is resolved.
 
 ## 14. Firmware maintenance
 
-The complete application build preset is **`keyboard-fn-menu`**. The generic
+The complete Huntsman build preset is **`huntsman`**; `keyboard-fn-menu`
+is a supported alias producing the same artifact. The
 `firmware` preset is USB-only and does not provide the features in this manual.
 The current USB device provides NKRO keyboard, MIDI, CDC diagnostics, and
 the compatible updater interface. The configuration GUI is not a flasher.
@@ -770,12 +791,14 @@ repository; the original firmware/updater EXE is not needed to compile.
 cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
+cmake --preset huntsman
+cmake --build --preset huntsman
 ```
 
 The application binary is `build-keyboard-fn-menu/huntsman_firmware.bin`,
 exactly 131072 bytes. Building/testing does not flash or reset the keyboard.
+The latest build's tested scope and hardware-validation limits are recorded in
+[validation status](docs/CALIBRATION.md#validation-status).
 
 For installation, use the [custom firmware flashing tool](https://github.com/AL-255/Huntsman-V3-Pro-Mini-Flasher)'s
 **application-only** workflow. Its GUI accepts the raw application `.bin`;

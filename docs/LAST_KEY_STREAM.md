@@ -1,8 +1,11 @@
 # Triggered 20-sample key capture
 
 Device-side key selection and host capture are included in the complete
-`keyboard-fn-menu` application. Wait for calibration to finish
+`huntsman` application. Wait for calibration to finish
 before selecting diagnostic streams.
+HKL1 sensor IDs and the host's fixed 8 kHz estimator describe this board,
+not arbitrary platform ports. The shared MCU estimator uses its layout's rate;
+see [velocity](KEY_VELOCITY.md) and [porting](PORTING.md).
 
 ## Usage
 
@@ -30,6 +33,14 @@ new capture and prevents old queued data being mistaken for its samples.
 The tool does not flush tty input, reset the keyboard, start/restart the ASIC,
 enable host keystrokes, or change lighting. This firmware preset starts scanning
 and lighting automatically after USB configuration.
+
+The command optionally accepts a third argument, `stream key THRESHOLD SESSION
+SENSOR` (0..64, or 255): a pinned session streams that sensor's raw on every
+scan regardless of threshold crossings, so full-rate edges of one key can be
+captured without first-press auto-selection. A sensor outside the active
+layout is reported as an invalid session (HKL1 flags-4 fail-stop), never
+silently. The configuration GUI uses the pinned form for its keystroke hold
+mode; this CLI keeps the two-argument auto-selecting form.
 
 Press means raw **strictly less than** the threshold (default 3800, range
 1..4096). A new downward crossing selects that sensor. A sensor already below
@@ -61,7 +72,7 @@ The startup banner and result explicitly identify the 8 kHz assumption.
 This is not calibrated millimeters/second and does not use measured delivery
 timing: an actual 8 kHz acquisition rate is not established.
 
-This host estimator matches the MCU estimator before normalization.
+This host estimator matches the Huntsman MCU estimator before normalization.
 
 ### Repeat captures
 
@@ -169,10 +180,10 @@ All integers are little-endian. Every report is 20 bytes.
 ```sh
 cmake --preset host-tests
 cmake --build --preset host-tests
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
+cmake --preset huntsman
+cmake --build --preset huntsman
 ctest --preset host-tests
-cmake --build --preset keyboard-fn-menu --target audit-keyboard audit-lighting
+cmake --build --preset huntsman --target audit-keyboard audit-lighting
 ```
 
 Current host tests cover the startup banner being flushed before any input,

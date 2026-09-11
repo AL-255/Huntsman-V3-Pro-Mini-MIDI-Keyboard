@@ -4,21 +4,29 @@ import copy
 import os
 import pty
 import select
+import shutil
 import struct
+import tempfile
 import threading
 import time
 import unittest
-from keyboard_gui_model import SIZE, Decoder, decode, ansi_geometry, profile_from_snapshot, validate_profile, note_name, parse_note
-from keyboard_gui_transport import Connection
+from keyboard_gui_model import SIZE, CAPTURE_POINTS, KeystrokeCapture, Decoder, decode, ansi_geometry, profile_from_snapshot, validate_profile, note_name, parse_note
+from keyboard_gui_transport import Connection, find_cdc_device
 
 
 def packet(ack=1, result=1, press=None, release=None, flags=7, sequence=0, version=4,
-           velocity=None, captures=None, states=None, mapping=None, performance_mode=0, octave=0, calibration_state=0):
+           velocity=None, captures=None, states=None, mapping=None, performance_mode=0, octave=0, calibration_state=0, raw=None):
     size = SIZE if version >= 4 else 1088 if version >= 2 else 480
     data = bytearray(size)
     struct.pack_into('<4sH6B5I',data,0,f'HKG{version}'.encode(),size,version,1,61,flags,result,0,sequence,0,ack,0,0)
-    for offset,values in ((32,[3900]*61),(162,press or [3500]*61),(292,release or [3600]*61)):
+    raw_values = raw if raw is not None else [3900]*61
+    press_values = press or [3500]*61
+    for offset,values in ((32,raw_values),(162,press_values),(292,release or [3600]*61)):
         struct.pack_into('<61H',data,offset,*values)
+    bits = 0
+    for i,value in enumerate(raw_values):
+        if value < press_values[i]: bits |= 1 << i
+    data[422:431] = bits.to_bytes(9,'little')
     if version >= 2:
         struct.pack_into('<61f' if version >= 3 else '<61i',data,447,*(velocity or [0]*61))
         struct.pack_into('<61I',data,707,*(captures or [0]*61))
@@ -34,7 +42,7 @@ def packet(ack=1, result=1, press=None, release=None, flags=7, sequence=0, versi
 
 
 class Device(threading.Thread):
-    def __init__(self,fd,reject=False,mismatch=False,silent=False,version=4):
+    def __init__(self,fd,reject=False,mismatch=False,silent=False,version=4,key_rate=.000125):
         super().__init__(daemon=True)
         self.fd,self.reject,self.mismatch,self.silent = fd,reject,mismatch,silent
         self.stop_event = threading.Event()
@@ -44,6 +52,13 @@ class Device(threading.Thread):
         self.flags,self.ack,self.result,self.sequence = 7,0,0,0
         self.error = None
         self.version=version; self.calibration_state=0
+        self.raw = None  # optional 61-value override for the next snapshots
+        self.stream_mode = 'gui'       # 'gui' HKG packets or 'key' HKL1 records
+        self.key_mode = None           # (session, threshold, sensor) while in key mode
+        self.key_seq = 0; self.key_first = True
+        self.key_rate = key_rate       # seconds between HKL1 records (8 ksps default)
+        self.key_raw = 3900            # raw value for the pinned sensor
+        self.key_cb = None             # optional callable(seq) -> raw override
 
     def run(self):
         buffer = bytearray(); streaming = False; last = 0
@@ -54,7 +69,12 @@ class Device(threading.Thread):
                     while b'\n' in buffer:
                         line,_,buffer = buffer.partition(b'\n')
                         fields = line.decode().split()
-                        if fields == ['stream','gui']: streaming = True
+                        if fields == ['stream','gui']:
+                            streaming = True; self.stream_mode = 'gui'
+                        elif fields[:2] == ['stream','key']:
+                            streaming = True; self.stream_mode = 'key'
+                            self.key_mode = (int(fields[3]),int(fields[2]),int(fields[4]) if len(fields) > 4 else 255)
+                            self.key_seq = 0; self.key_first = True
                         if not fields or fields[0] != 'cfg': continue
                         self.commands.append(fields)
                         self.ack = int(fields[2]); self.result = 1
@@ -72,11 +92,21 @@ class Device(threading.Thread):
                             elif not self.mismatch: self.mapping[int(fields[3])] = int(fields[4])
                         elif fields[1] == 'calibrate': self.calibration_state=3
                         elif fields[1] == 'calcancel': self.calibration_state=7
-                if streaming and not self.silent and time.monotonic()-last > .03:
-                    os.write(self.fd,packet(self.ack,self.result,self.press,self.release,self.flags,self.sequence,mapping=self.mapping,
-                                           version=self.version,calibration_state=self.calibration_state,
-                                           states=[9,9]+[1]*59 if self.version>=6 and self.calibration_state==3 else None))
-                    self.sequence += 1; last = time.monotonic()
+                if streaming and not self.silent:
+                    if self.stream_mode == 'key' and time.monotonic()-last > self.key_rate:
+                        session,threshold,sensor = self.key_mode
+                        raw = self.key_cb(self.key_seq) if self.key_cb else self.key_raw
+                        frame = bytearray(20)
+                        struct.pack_into('<4sIIHBBH',frame,0,b'HKL1',session,self.key_seq,raw,sensor,
+                                         1 if self.key_first else 0,threshold)
+                        frame[18:20] = struct.pack('<H',sum(struct.unpack('<9H',frame[:18])) & 0xffff)
+                        os.write(self.fd,frame)
+                        self.key_seq += 1; self.key_first = False; last = time.monotonic()
+                    elif self.stream_mode == 'gui' and time.monotonic()-last > .03:
+                        os.write(self.fd,packet(self.ack,self.result,self.press,self.release,self.flags,self.sequence,mapping=self.mapping,
+                                               version=self.version,calibration_state=self.calibration_state,raw=self.raw,
+                                               states=[9,9]+[1]*59 if self.version>=6 and self.calibration_state==3 else None))
+                        self.sequence += 1; last = time.monotonic()
         except Exception as error: self.error = error
 
 
@@ -163,6 +193,89 @@ class Tests(unittest.TestCase):
             self.assertEqual(sum(k.width for k in values),15)
             for left,right in zip(values,values[1:]): self.assertEqual(left.x+left.width,right.x)
 
+    def fake_sysfs(self,ports):
+        """Minimal sysfs tree: tty entries -> interface dirs -> USB devices + dev nodes."""
+        base = tempfile.mkdtemp(prefix='gui-sysfs-')
+        self.addCleanup(shutil.rmtree,base,ignore_errors=True)
+        os.makedirs(os.path.join(base,'class','tty'))
+        os.makedirs(os.path.join(base,'dev'))
+        for name,vendor,product in ports:
+            device_dir = os.path.join(base,'devices','usb','dev-'+name)
+            interface_dir = os.path.join(device_dir,'iface')
+            tty_dir = os.path.join(interface_dir,'tty',name)
+            os.makedirs(tty_dir)
+            if vendor is not None:
+                with open(os.path.join(device_dir,'idVendor'),'w') as stream: stream.write(str(vendor)+'\n')
+            if product is not None:
+                with open(os.path.join(device_dir,'idProduct'),'w') as stream: stream.write(str(product)+'\n')
+            os.symlink(interface_dir,os.path.join(tty_dir,'device'))
+            os.symlink(tty_dir,os.path.join(base,'class','tty',name))
+            with open(os.path.join(base,'dev',name),'w') as stream: stream.write('')
+        return base
+
+    def test_device_detection(self):
+        dev = lambda base: os.path.join(base,'dev')
+        base = self.fake_sysfs([('ttyACM1','1532','02b0'),('ttyACM0','1d6b','0003')])
+        self.assertEqual(find_cdc_device(sysfs=base,dev=dev(base)),dev(base)+'/ttyACM1')  # name order; only 1532:02b0 matches
+        self.assertEqual(find_cdc_device(0x1d6b,0x0003,sysfs=base,dev=dev(base)),dev(base)+'/ttyACM0')
+        self.assertEqual(find_cdc_device(0x1532,0x02b0,sysfs=base,dev=dev(base)),dev(base)+'/ttyACM1')  # explicit IDs
+        base = self.fake_sysfs([('ttyACM0','1532','0200')])
+        self.assertIsNone(find_cdc_device(sysfs=base,dev=dev(base)))  # wrong product
+        base = self.fake_sysfs([('ttyACM0','zzzz','02b0')])
+        self.assertIsNone(find_cdc_device(sysfs=base,dev=dev(base)))  # unreadable identity, no crash
+        base = self.fake_sysfs([('ttyACM0',None,None)])
+        self.assertIsNone(find_cdc_device(sysfs=base,dev=dev(base)))  # no USB identity on the chain
+        base = self.fake_sysfs([('ttyUSB0','1532','02b0')])
+        self.assertIsNone(find_cdc_device(sysfs=base,dev=dev(base)))  # non-ACM port ignored
+        base = self.fake_sysfs([('ttyACM0','1532','02b0')])
+        os.remove(dev(base)+'/ttyACM0')
+        self.assertIsNone(find_cdc_device(sysfs=base,dev=dev(base)))  # matching port without a device node
+        self.assertIsNone(find_cdc_device(sysfs='/nonexistent'))
+
+    def test_keystroke_capture(self):
+        self.assertEqual(CAPTURE_POINTS,20)
+        c = KeystrokeCapture()
+        self.assertTrue(c.armed)
+        self.assertFalse(c.feed(3900,False))
+        self.assertTrue(c.armed)  # no trigger yet: waveform stays frozen
+        self.assertTrue(c.feed(3400,True))  # down edge: trigger frame is sample zero
+        self.assertEqual((c.points,c.armed,c.done),([3400],False,False))
+        self.assertTrue(c.feed(3600,False))  # release does not truncate the capture
+        for i in range(CAPTURE_POINTS-2): self.assertTrue(c.feed(3000+i,False))
+        self.assertTrue(c.done)
+        self.assertEqual(len(c.points),CAPTURE_POINTS)
+        self.assertIsNone(c.fit)  # no captures data on this fake device
+        before = list(c.points)
+        self.assertFalse(c.feed(2800,False))  # held: no refresh, points frozen
+        self.assertEqual(c.points,before)
+        self.assertTrue(c.feed(2000,True))  # latest keystroke wins and restarts
+        self.assertEqual((c.points,c.done),([2000],False))
+        c = KeystrokeCapture()
+        self.assertFalse(c.feed(2500,True))  # held at arm time is a baseline, not a trigger
+        self.assertTrue(c.armed)
+        self.assertFalse(c.feed(3900,False))
+        self.assertTrue(c.feed(2500,True))  # release + press is the real edge
+        self.assertEqual(c.points,[2500])
+        c = KeystrokeCapture()
+        c.feed(3900,False)  # released baseline before the trigger
+        self.assertTrue(c.feed(3400,True))  # captures0 is None on legacy firmware
+        self.assertTrue(c.feed(3200,True,captures=1,velocity=0.5,fit_valid=True))
+        self.assertIsNone(c.fit)  # no trigger-frame counter to compare against
+        c = KeystrokeCapture()
+        c.feed(3900,False,captures=4,velocity=0.0,fit_valid=True)
+        self.assertTrue(c.feed(3400,True,captures=5,velocity=0.42,fit_valid=True))
+        for _ in range(CAPTURE_POINTS-1):
+            c.feed(3200,True,captures=5,velocity=0.42,fit_valid=True)
+        self.assertEqual(c.fit,(5,0.42))  # fit completed in the trigger snapshot
+        c = KeystrokeCapture()
+        c.feed(3900,False,captures=4,velocity=0.0)
+        c.feed(3400,True,captures=4,velocity=0.0)
+        self.assertIsNone(c.fit)  # stale fit from before the trigger is not attributed
+        c.feed(3300,True,captures=5,velocity=0.87,fit_valid=True)
+        self.assertEqual(c.fit,(5,0.87))  # first counter rise after the trigger
+        c.reset()
+        self.assertTrue(c.armed); self.assertEqual(c.points,[]); self.assertIsNone(c.fit)
+
     def test_decoder(self):
         data = packet()
         d = Decoder(); results = []
@@ -197,6 +310,32 @@ class Tests(unittest.TestCase):
             with self.assertRaises(ValueError): validate_profile(bad)
         bad = copy.deepcopy(profile); bad['keys'][0] = bad['keys'][1]
         with self.assertRaises(ValueError): validate_profile(bad)
+
+    def test_transport_key_stream_switch(self):
+        resources = self.transport(); _,_,device,connection = resources
+        try:
+            until(lambda:connection.connected)
+            self.assertEqual(connection.stream_mode,'gui')
+            connection.stream_key(3500,5)
+            until(lambda:connection.stream_mode == 'key')
+            self.assertEqual((connection.key_sensor,connection.key_threshold),(5,3500))
+            self.assertEqual(device.stream_mode,'key')
+            collected = []
+            def accumulate():
+                collected.extend(connection.drain_samples())
+                return len(collected) >= 30
+            until(accumulate)
+            self.assertTrue(all(value == 3900 for value in collected))
+            # GUI telemetry pauses; the connection survives past the 2 s
+            # telemetry timeout because full-rate samples keep it alive.
+            time.sleep(2.2)
+            self.assertTrue(connection.is_alive() and connection.connected)
+            self.assertEqual(connection.stream_mode,'key')
+            connection.stream_gui()
+            until(lambda:connection.stream_mode == 'gui')
+            until(lambda:connection.snapshot() and time.monotonic()-connection.snapshot()[0] < 1)
+            self.assertTrue(connection.connected)
+        finally: self.cleanup(*resources)
 
     def transport(self,**options):
         master,slave = pty.openpty()

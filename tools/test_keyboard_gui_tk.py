@@ -9,6 +9,7 @@ import time
 import tkinter as tk
 from unittest.mock import patch
 from keyboard_gui import App
+from keyboard_gui_model import CAPTURE_POINTS
 from test_keyboard_gui import Device
 
 
@@ -47,6 +48,18 @@ def main():
         root.update()
         assert app.selected == key.sensor and app.press.get() == '3500'
         app.select(32); root.update()
+        with patch('keyboard_gui.find_cdc_device',return_value='/dev/fake'):
+            app.detect()
+        assert app.device.get() == '/dev/fake' and 'Detected' in app.message.get()
+        with patch('keyboard_gui.find_cdc_device',return_value=None):
+            app.detect()
+        assert app.device.get() == '' and 'No USB 1532:02b0' in app.message.get()
+        app.hold_button.invoke()
+        assert app.hold_mode.get() and app.capture.armed
+        root.update()
+        app.hold_button.invoke()
+        assert not app.hold_mode.get()
+        root.update()
         if args.screenshot:
             from PIL import ImageGrab
             ImageGrab.grab(xdisplay=os.environ['DISPLAY']).save(args.screenshot)
@@ -61,8 +74,8 @@ def main():
         try:
             root = tk.Tk(); app = App(root,device=os.ttyname(slave))
             app.toggle_connection()
-            def pump_until(predicate):
-                deadline = time.monotonic()+3
+            def pump_until(predicate,seconds=3):
+                deadline = time.monotonic()+seconds
                 while time.monotonic() < deadline:
                     root.update()
                     if predicate(): return
@@ -95,13 +108,60 @@ def main():
                 app.select(next(k.sensor for k in app.keys if k.label == label))
                 root.update(); pump_until(lambda:str(app.midi_button['state']) == 'disabled')
                 assert str(app.midi_button['state']) == 'disabled'
+            app.select(32); root.update()
+            app.hold_button.invoke()
+            pump_until(lambda:app.hold_mode.get() and app.key_capture and app.connection.stream_mode == 'key')
+            assert app.connection.key_sensor == 32 and app.capture.armed
+            assert 'Armed' in app.hold_status.get() and 'full scan rate' in app.hold_status.get()
+            assert 'KEYSTROKE CAPTURE' in app.status.get()
+            pump_until(lambda:'samples/s' in app.status.get(),3)  # measured rate appears
+            history_len = len(app.history)
+            device.key_raw = 2500  # below press 3000 → Schmitt down edge at 8 ksps
+            pump_until(lambda:app.capture.done,4)
+            assert len(app.capture.points) == CAPTURE_POINTS
+            assert app.capture.points[0] == 2500 and set(app.capture.points) == {2500}
+            assert 'held' in app.hold_status.get() and '0.0000 [0–1]' in app.hold_status.get()
+            points = list(app.capture.points)
+            root.update(); time.sleep(.05); root.update()
+            assert app.capture.points == points  # held: waveform frozen between triggers
+            assert len(app.history) == history_len  # no scrolling in hold mode
+            device.key_raw = 3900
+            pump_until(lambda:app.capture.prev_down is False)
+            device.key_raw = 2000  # latest keystroke wins and restarts the capture
+            pump_until(lambda:app.capture.points and app.capture.points[0] == 2000,3)
+            assert set(app.capture.points) == {2000}
+            # Fall ramp at 50 counts/sample reproduces the device velocity math;
+            # its own counter keeps the trigger in the linear zone regardless
+            # of how many records the session has already streamed.
+            device.key_raw = 3900
+            pump_until(lambda:app.capture.prev_down is False)
+            ramp = {'n':0}
+            def ramp_values(seq):
+                ramp['n'] += 1
+                return max(100, 3900 - (ramp['n'] % 100)*50)
+            device.key_cb = ramp_values
+            pump_until(lambda:app.capture.velocity == 3*50*8000/3,3)
+            assert app.capture.points[0] < 3000
+            assert '400,000 counts/s' in app.hold_status.get()
+            device.key_cb = None
+            app.hold_button.invoke()
+            pump_until(lambda:not app.hold_mode.get() and app.connection.stream_mode == 'gui')
+            pump_until(app.usable,4)
+            pump_until(lambda:len(app.history) > history_len,3)
             app.disable_button.invoke()
             pump_until(lambda:not app.snapshot.flags & 1)
             app.toggle_connection()
             pump_until(lambda:not app.connection.is_alive())
             assert not app.usable()
+            app.device.set('auto')  # auto-detection resolves before connecting
+            with patch('keyboard_gui.find_cdc_device',return_value=os.ttyname(slave)):
+                app.connect_button.invoke()
+            pump_until(app.usable)
+            assert app.device.get() == os.ttyname(slave)
+            app.toggle_connection()
+            pump_until(lambda:not app.connection.is_alive())
             app.close(); root = None
-            print('PASS Tk+PTY: calibration arm/status/disabled edits/cancel, select A, apply pair/all/MIDI, disable, disconnect')
+            print('PASS Tk+PTY: calibration arm/status/disabled edits/cancel, select A, apply pair/all/MIDI, 8 ksps keystroke hold mode, device auto-detect, disable, disconnect')
         finally:
             device.stop_event.set(); device.join(1)
             os.close(master); os.close(slave)

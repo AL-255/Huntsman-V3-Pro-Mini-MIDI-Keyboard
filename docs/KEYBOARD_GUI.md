@@ -1,30 +1,49 @@
 # Standalone keyboard and configuration GUI
 
-Current firmware is `keyboard-fn-menu` with HKG6 telemetry:
+The `huntsman` firmware provides HKG6 telemetry:
 standalone Schmitt keyboard, MIDI, normalized per-key velocity and parallel
 calibration. The GUI supports older HKG1–5 devices with version-gated controls.
 See [current validation](CALIBRATION.md#validation-status).
 The GUI never flashes the application or enters the bootloader; completing
 calibration saves endpoints to the two authorized tail pages.
+It is a Huntsman ANSI host tool, not automatic layout discovery for arbitrary
+MIDI-Typist ports. The shared command parser is portable; physical drawings and
+HKG6 framing require matching board support. See [host integration](PORTING.md#5-add-lighting-storage-and-host-integration).
 
 ## Build and run
 
 From the repository root, using the existing pinned NXP SDK/toolchain setup:
 
 ```sh
-cmake --preset keyboard-fn-menu
-cmake --build --preset keyboard-fn-menu
-python3 tools/keyboard_gui.py --device /dev/ttyACM0
+cmake --preset huntsman
+cmake --build --preset huntsman
+python3 tools/keyboard_gui.py                # auto-detects the CDC port
+python3 tools/keyboard_gui.py --device /dev/ttyACM1   # explicit node override
 ```
 
 Current application: `build-keyboard-fn-menu/huntsman_firmware.bin`, exactly 131072 bytes,
-linked at `0x20000000`. Original bootloader/update transport is unchanged.
+linked at `0x20000000`, sha256
+`dc9829f184fd211d304aad11546d628c147fea24a2ec8257fc02dd031659743f`
+(flashed with the sibling updater's application-only path and verified live:
+GUI telemetry, pinned-sensor stream at ~1.35 k samples/s, stream switch-back).
+Original bootloader/update transport is unchanged.
 
 The Linux GUI uses Python's standard library and Tk (`python3-tk` must be
 installed). No pip packages are required. Your user needs access to the CDC
 device. Close the decoder, serial terminals and other CDC readers first: the
 GUI owns the stream while connected. It does not request root privileges.
 `python3 tools/keyboard_gui.py --demo` previews the UI without device access.
+
+By default the GUI auto-detects the keyboard: it scans `/sys/class/tty/ttyACM*`
+and walks each port's USB ancestry until it finds `idVendor`/`idProduct`; the
+first port whose USB device is `1532:02b0` (the Huntsman V3 Pro Mini
+application descriptor) and whose `/dev` node exists is selected. Detection
+also runs when clicking **Detect** and whenever **Connect** is pressed with an
+empty or `auto` device field. With several matching boards connected,
+detection picks the first port in name order — use `--device` or the device
+field to choose explicitly. If no `1532:02b0` CDC port is found (wrong cable,
+missing udev permissions or `/dev` node, bootloader mode), the GUI reports it
+and the field stays available for a manual path.
 
 Click **Connect**, then select a drawn key. The diagram uses the recovered
 61-sensor ANSI mapping and standard 60% key positions/sizes, including the
@@ -106,6 +125,42 @@ and errors. It disables ordinary edits during calibration; Cancel remains
 available. Completion of all keys saves, while cancellation/5 s inactivity
 discards staged results. See [calibration](CALIBRATION.md) for details.
 
+## Keystroke hold mode
+
+Checking **Hold first 20 pts of keystroke** above the bottom-right plot switches
+it from the scrolling recent-value waveform to a frozen per-keystroke capture,
+for tuning the velocity sensitivity curve. Engaging the mode switches the
+device CDC stream from GUI telemetry to the per-key **HKL1 stream**, which
+carries the selected sensor's raw value on **every optical scan frame** — the
+fastest rate the keyboard produces. On this hardware that measures about
+1.35 k samples/s (the GUI shows the measured rate, e.g.
+`KEYSTROKE CAPTURE 1,453 samples/s`); the nominal 8 kHz figure remains only the
+firmware's velocity assumption, not the acquisition rate. While the mode is
+active the device serves one stream at a time, so the keyboard drawing and
+status telemetry pause, and configuration buttons disable; typing and MIDI are
+unaffected. Toggling the mode off (or changing the selected key) re-arms the
+stream for the new key or returns to GUI telemetry.
+
+In this mode the plot updates only when the selected key is triggered: a down
+edge (raw crossing below the press threshold, the stream threshold) becomes
+sample 0, and the following full-rate samples fill the capture until 20 points
+are held. The held points keep the press/release reference lines; the orange
+dot marks the triggering sample and the bottom axis numbers the 20 sample
+slots. Releasing the key does not truncate the capture, and a new down edge
+always restarts it — the latest keystroke wins. Changing the selected key or
+toggling the mode clears the capture.
+
+Because the capture is full-rate, samples 1–5 after the trigger are exactly
+the five readbacks of the device velocity window. The GUI reproduces the
+firmware's fit on those five samples (four signed intervals, one median
+outlier discarded, average × assumed 8 kHz) and shows both the raw result and
+its 0–1 normalization, e.g. `velocity 0.0889 [0–1] (400,000 counts/s; assumed
+8 kHz)`, so each held raw fall can be compared with the velocity value the
+device reports for the same keystroke. The plot holds its points and the
+attributed velocity until the next trigger. Requires the firmware with the
+pinned-sensor `stream key` argument; in `--demo` mode (no device) the capture
+falls back to the 33 ms telemetry frames with device-fit attribution instead.
+
 ## Profiles and persistence
 
 Thresholds and keyboard enable state are **RAM-only**. Closing the GUI leaves
@@ -136,6 +191,7 @@ Commands are newline-delimited ASCII; all arguments are decimal:
 
 ```text
 stream gui
+stream key THRESHOLD [SESSION [SENSOR]]
 cfg get ID
 cfg set ID SENSOR PRESS RELEASE
 cfg all ID PRESS RELEASE
@@ -152,7 +208,13 @@ Malformed/unparseable IDs receive no acknowledgment. Hosts must serialize
 commands and wait for matching ACKs: only the last acknowledgment is retained.
 
 `stream gui` selects latest-only 1152-byte HKG6 snapshots, at most one per 33 ms.
-See [the current wire layout](MIDI_PROTOCOL.md#hkg6-telemetry) and
+`stream key THRESHOLD [SESSION [SENSOR]]` selects the lossless 20-byte HKL1
+per-key stream, one record per optical scan frame; with `SENSOR` 0..64 the
+session is pinned to that sensor (raw streamed regardless of crossings),
+omitting it or passing 255 keeps the first-press auto-selection. The keystroke
+hold mode uses the pinned form; the two stream modes are mutually exclusive on
+the device and switching flushes the previous session. See
+[the current wire layout](MIDI_PROTOCOL.md#hkg6-telemetry) and
 [calibration fields](CALIBRATION.md#gui-protocol).
 Pending USB payloads remain immutable; only the unsent snapshot is replaced.
 Old pending stream bytes may precede the first GUI frame after switching.
@@ -166,7 +228,7 @@ cmake --preset host-tests
 cmake --build --preset host-tests
 ctest --preset host-tests
 python3 -B tools/test_keyboard_gui_tk.py
-cmake --build --preset keyboard-fn-menu --target audit-lighting audit-calibration
+cmake --build --preset huntsman --target audit-lighting audit-calibration
 ```
 
 The last command includes USB, keyboard, stream and lighting ARM execution
@@ -179,5 +241,10 @@ Coverage includes strict threshold boundaries, hysteresis noise, simultaneous
 keys/modifiers, per-key edits, neutral arming, rejected configuration, no-CDC
 operation, FN/keyboard actions and editor telemetry, USB-reset/invalid/timeout
 releases, USB/MIDI/updater regression, pending-USB buffer ownership, FS/HS GUI
-framing, JSON validation, PTY command acknowledgments and cancellation, and
-real Tk geometry/selection/window-resize tests.
+framing, JSON validation, PTY command acknowledgments and cancellation,
+keystroke-hold capture, full-rate stream mode switching and velocity
+reproduction, USB VID/PID device detection, pinned-sensor HKL1 sessions
+(ARM-executed), and real Tk geometry/selection/window-resize tests. Live
+hardware verification (application flashed via the sibling updater): HKG6
+telemetry, hold-mode stream engagement at the measured optical rate
+(~1.35 k samples/s), velocity window capture and GUI telemetry resume.

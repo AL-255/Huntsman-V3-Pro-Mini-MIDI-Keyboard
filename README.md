@@ -18,6 +18,21 @@ See [architecture](docs/ARCHITECTURE.md), [adding a board](docs/PORTING.md),
 [scheduling/FreeRTOS](docs/SCHEDULING.md), and [building from scratch](docs/BUILDING.md).
 The feature guide and host GUI below describe the Huntsman port.
 
+## Port to another platform
+
+Follow the [platform porting guide](docs/PORTING.md). It includes a runnable
+desktop example, a board build-manifest pattern, a C lifecycle adapter,
+ADC/key/LED contracts, USB and storage responsibilities, RTOS integration,
+and a hardware acceptance checklist. Add your board under `firmware/boards`;
+do not copy the shared algorithms or introduce SDK headers into `firmware/app`.
+
+The [documentation index](docs/README.md) separates user, build, porting and
+host-integration reading paths. GUI layout and Huntsman flash/protocol formats
+are board-specific; portability does not make the Huntsman binary safe for
+an unported device.
+
+## Huntsman feature overview
+
 **Current build: `huntsman` (alias `keyboard-fn-menu`).** It provides a lit Fn system menu,
 calibrated trigger-point editing, backlight brightness controls, NKRO typing,
 43-note MIDI mapping with velocity/aftertouch, parallel calibration and a
@@ -160,10 +175,16 @@ can overwrite these defaults with that profile's saved mappings.
 On Linux, with Python 3 and Tk installed:
 
 ```sh
+python3 tools/keyboard_gui.py
+# Explicit port override; the default auto-detects USB 1532:02b0:
 python3 tools/keyboard_gui.py --device /dev/ttyACM0
 # Offline preview; never opens the keyboard:
 python3 tools/keyboard_gui.py --demo
 ```
+
+On startup, on **Detect**, and whenever **Connect** is pressed with an empty
+or `auto` device field, the GUI scans `/sys/class/tty/ttyACM*` for the first
+port whose USB ancestry reports `idVendor 1532` / `idProduct 02b0`.
 
 Click **Connect**, then click a key on the physical ANSI layout. The GUI shows
 live raw samples, down/up state, firmware-calculated velocity, current mode,
@@ -180,6 +201,12 @@ octave and device-confirmed settings.
 - Enable/disable controls govern both keyboard and MIDI output; raw monitoring
   and velocity calculations continue. Configuration edits release output and
   require a fresh neutral frame before input resumes.
+- **Hold first 20 pts of keystroke** freezes the bottom-right plot into a
+  per-keystroke capture: engaging it switches the device to a full-rate
+  per-key stream (every optical scan frame, ~1.35 k samples/s on this
+  hardware) and holds the first 20 samples after the selected key's trigger,
+  with the firmware's velocity fit reproduced from the same window, until the
+  next press. See [the GUI guide](docs/KEYBOARD_GUI.md#keystroke-hold-mode).
 
 **Calibration endpoints save to the device; thresholds and MIDI mappings
 remain RAM-only.** In keyboard mode use **Fn+C** or the GUI's **Calibrate keys
