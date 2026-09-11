@@ -144,11 +144,12 @@ stream for the new key or returns to GUI telemetry.
 In this mode the plot updates only when the selected key is triggered: a down
 edge (raw crossing below the press threshold, the stream threshold) becomes
 sample 0, and the following full-rate samples fill the capture until 20 points
-are held. The held points keep the press/release reference lines; the orange
-dot marks the triggering sample and the bottom axis numbers the 20 sample
-slots. Releasing the key does not truncate the capture, and a new down edge
-always restarts it — the latest keystroke wins. Changing the selected key or
-toggling the mode clears the capture.
+are held. A vertical axis on the left carries raw-value ticks (0–4000) with
+gridlines; the press/release reference lines are labeled at the right edge.
+The orange dot marks the triggering sample and the bottom axis numbers the 20
+sample slots. Releasing the key does not truncate the capture, and a new down
+edge always restarts it — the latest keystroke wins. Changing the selected key
+or toggling the mode clears the capture.
 
 Because the capture is full-rate, samples 1–5 after the trigger are exactly
 the five readbacks of the device velocity window. The GUI reproduces the

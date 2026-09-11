@@ -35,6 +35,10 @@ def main():
         assert '0.500000 [0–1]' in app.details.get()
         assert app.canvas.itemcget(app.items[32][2],'text') == 'v0.500'
         assert str(app.connect_button['state']) == 'disabled'
+        graph_texts = [app.graph.itemcget(item,'text') for item in app.graph.find_all() if app.graph.type(item) == 'text']
+        for tick in ('0','1000','2000','3000','4000'):  # vertical raw-value axis
+            assert tick in graph_texts
+        assert 'press 3500' in graph_texts and 'release 3600' in graph_texts
         for key in app.keys:
             rect,_,_ = app.items[key.sensor]
             x1,y1,x2,y2 = app.canvas.coords(rect)

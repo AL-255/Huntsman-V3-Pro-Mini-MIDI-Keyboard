@@ -14,6 +14,8 @@ from keyboard_gui_model import Snapshot, ansi_geometry, profile_from_snapshot, v
 from keyboard_gui_transport import Connection, find_cdc_device, USB_VENDOR_ID, USB_PRODUCT_ID
 from last_key_stream import press_velocity
 
+AXIS_W = 34  # left gutter for the raw-value vertical axis of the bottom plot
+
 
 class App:
     def __init__(self,root,device='/dev/ttyACM0',demo=False):
@@ -178,6 +180,15 @@ class App:
             self.capture_rate = self._rate_count/elapsed
             self._rate_count = 0; self._rate_at = time.monotonic()
 
+    def draw_axis(self,w,h):
+        """Vertical raw-value axis (1..4096 scale) with ticks and gridlines."""
+        self.graph.create_line(AXIS_W,15,AXIS_W,h-15,fill='#354958')
+        for value in range(0,5000,1000):
+            y = h-15-value/4096*(h-30)
+            self.graph.create_line(AXIS_W-4,y,AXIS_W,y,fill='#9cafbc')
+            self.graph.create_text(AXIS_W-7,y,anchor='e',text=str(value),fill='#9cafbc',font=('monospace',8))
+            self.graph.create_line(AXIS_W,y,w,y,fill='#23303b',dash=(2,4))
+
     def paint_hold(self,w,h):
         cap = self.capture
         if self.key_capture:
@@ -191,13 +202,13 @@ class App:
             self.hold_status.set('Armed — waiting for a keystroke trigger'+suffix)
             return
         span = CAPTURE_POINTS-1
-        coords = [(2+i/span*(w-4),h-15-v/4096*(h-30)) for i,v in enumerate(cap.points)]
+        coords = [(AXIS_W+i/span*(w-AXIS_W-4),h-15-v/4096*(h-30)) for i,v in enumerate(cap.points)]
         if len(cap.points) > 1:
             self.graph.create_line(*[c for xy in coords for c in xy],fill='#e9f0f4',width=2)
         for i,(x,y) in enumerate(coords):
             self.graph.create_oval(x-2,y-2,x+2,y+2,fill='#f1a366' if i == 0 else '#e9f0f4',outline='')
         for i in range(0,CAPTURE_POINTS,5):
-            self.graph.create_text(2+i/span*(w-4),h-3,text=str(i),fill='#9cafbc',font=('monospace',8))
+            self.graph.create_text(AXIS_W+i/span*(w-AXIS_W-4),h-3,text=str(i),fill='#9cafbc',font=('monospace',8))
         state = f'{"held" if cap.done else "capturing"} • {len(cap.points)}/{CAPTURE_POINTS} points{suffix}'
         if cap.velocity is not None:
             normalized = 0.0 if cap.velocity <= 0 else 1.0 if cap.velocity >= 4500000 else cap.velocity/4500000.0
@@ -249,18 +260,19 @@ class App:
                              (f'\nMIDI base: {note_name(s.midi_mapping[i])} ({s.midi_mapping[i] if s.midi_mapping[i] != 255 else "unmapped"}); octave {s.octave:+d}' if s.version >= 4 else ''))
         self.graph.delete('all')
         w,h = max(1,self.graph.winfo_width()),max(1,self.graph.winfo_height())
+        self.draw_axis(w,h)
         if s and s.count == 61:
             for value,color,title in ((s.press[self.selected],'#f1a366','press'),(s.release[self.selected],'#56d7db','release')):
                 y = h-15-value/4096*(h-30)
-                self.graph.create_line(0,y,w,y,fill=color,dash=(4,4))
-                self.graph.create_text(6,y+10 if title == 'press' else y-10,anchor='w',text=f'{title} {value}',fill=color)
+                self.graph.create_line(AXIS_W,y,w-2,y,fill=color,dash=(4,4))
+                self.graph.create_text(w-6,y+10 if title == 'press' else y-10,anchor='e',text=f'{title} {value}',fill=color)
         if self.hold_mode.get():
             self.paint_hold(w,h)
         else:
             self.hold_status.set('')
             if len(self.history)>1:
                 points = []
-                for i,value in enumerate(self.history): points.extend((i/(len(self.history)-1)*(w-2),h-15-value/4096*(h-30)))
+                for i,value in enumerate(self.history): points.extend((AXIS_W+i/(len(self.history)-1)*(w-AXIS_W-2),h-15-value/4096*(h-30)))
                 self.graph.create_line(*points,fill='#e9f0f4',width=2)
 
     def detect(self):
