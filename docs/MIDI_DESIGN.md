@@ -114,6 +114,19 @@ Fn+E selects the root; Fn+S selects the scale. Both are table-driven modal
 menus, with preview while a choice is held and commit on its release.
 Only enabled, in-scale, in-range notes receive normal note backlighting.
 
+### Transmitted-velocity start
+
+A completed velocity estimate is normalized to 0..1 and transmitted as MIDI
+velocity 1..127. `velocity_start` (1..10, default 1) moves the **start** of
+that mapping: level 1 leaves the curve unchanged (`round(127 * v)`, at least
+1), level 10 transmits 127 for every note, and the levels between use a floor
+of `(level-1) * 127 / 9` and scale the remaining range:
+`velocity = floor + round((127 - floor) * v)`. The keyboard honours the
+measured dynamics at the low end while guaranteeing a minimum attack for
+quiet or partially-travelled presses. Fn+V opens the ten-step editor; the
+value is RAM-only, applies to every note key (including Jankó mode), and is
+reported by `menu status` as `velocity_start=1..10`.
+
 Fn+J toggles the built-in **Jankó layout**, a RAM-only replacement note
 mapping for the letter, number and punctuation rows: two whole-tone rows
 staggered against each other, so the physical keys form the arrangement

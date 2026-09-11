@@ -39,11 +39,12 @@ static void step(void)
 {
     keyboard_config_t before=raw.engine.config;
     keyboard_raw_frame(&raw,values,raw.count ? raw.count : 61,raw.profile ? raw.profile : 1,true);
-    uint8_t action=keyboard_menu_frame(&menu,&raw,lower,upper,&before,frames/8,false,midi.lower_muted,&midi.music);
+    uint8_t action=keyboard_menu_frame(&menu,&raw,lower,upper,&before,frames/8,false,midi.lower_muted,&midi.music,midi.velocity_start);
     if (action==MENU_MODE)
         keyboard_midi_toggle(&midi,&raw,frames/8);
     if (action==MENU_LOWER) keyboard_midi_toggle_lower(&midi,&raw);
     if (action==MENU_JANKO) keyboard_midi_toggle_janko(&midi,&raw);
+    if (action==MENU_VELOCITY_SET) keyboard_midi_set_velocity_start(&midi,menu.selection);
     if (action==MENU_SELECT_KEY) assert(keyboard_midi_select_music(&midi,&raw,menu.selection,midi.music.scale));
     if (action==MENU_SELECT_SCALE) assert(keyboard_midi_select_music(&midi,&raw,midi.music.root,menu.selection));
     keyboard_midi_frame(&midi,&raw,lower,upper,frames++/8);
@@ -215,6 +216,79 @@ static void faults_and_backpressure(void)
     keyboard_raw_invalidate(&raw); keyboard_midi_guard(&midi,&raw); drain();
     assert(!midi.refs[72] && !midi.count);
 }
+/* One 800000 counts/s press (0.17778 -> uncompressed MIDI velocity 23). */
+static unsigned strike_velocity(unsigned usage)
+{
+    const unsigned key=sensor((uint8_t)usage,0);
+    logged=0;
+    values[key]=3400; step();
+    for (unsigned frame=0; frame<9; ++frame) { values[key]-=100; step(); }
+    values[key]=1400; step(); /* bottom-out closes the window */
+    drain();
+    unsigned velocity=0;
+    for (unsigned i=0;i<logged;++i) if (log_events[i][1]==0x90) velocity=log_events[i][3];
+    values[key]=3900; step(); drain();
+    return velocity;
+}
+
+static unsigned digit_sensor(unsigned level)
+{
+    for (unsigned i=0;i<raw.count;++i)
+        if (keyboard_editor_digit(raw.profile,menu.keys[i])==level) return i;
+    assert(false); return 0;
+}
+
+static void velocity_start_mode(void)
+{
+    init(); toggle();
+    assert(midi.velocity_start==1);
+    assert(strike_velocity(0x14)==23); /* level 1 transmits the measured value */
+    /* Fn+V opens the ten-step page; 1 is 0%, 0 is 100%. */
+    const unsigned fn=fn_sensor(), v=sensor(0x19,0);
+    values[fn]=values[v]=2400; step();
+    assert(menu.pending==MENU_VELOCITY);
+    values[fn]=values[v]=3900; step();
+    assert(menu.velocity_page && menu.selection==1 && !raw.armed);
+    for (unsigned i=0;i<65;++i) values[i]=3900;
+    step(); /* page entry requires a released state */
+    const unsigned esc=sensor(0x29,0);
+    /* Selecting a level applies immediately, without leaving the page. */
+    for (unsigned level=1; level<=10; ++level) {
+        const unsigned key=digit_sensor(level);
+        values[key]=2400; step();
+        assert(menu.velocity_page && midi.velocity_start==level);
+        values[key]=3900; step();
+    }
+    assert(midi.velocity_start==10);
+    /* The bar lights digits up to the selection, green on the selection. */
+    uint8_t frame[LIGHTING_FRAME_SIZE];
+    memset(frame,0,sizeof(frame));
+    menu.selection=5;
+    keyboard_menu_lights(&menu,&raw,lower,upper,frame,0,true,false,false);
+    for (unsigned level=1; level<=10; ++level) {
+        const unsigned key=digit_sensor(level);
+        const lighting_channels_t *c=&g_lighting_channels[raw.profile][key];
+        if (level==5) assert(frame[c->red]==0 && frame[c->green]==255 && frame[c->blue]==0);
+        else if (level<5) assert(frame[c->red]==255 && frame[c->green]==255 && frame[c->blue]==255);
+        else assert(frame[c->red]==25 && frame[c->green]==25 && frame[c->blue]==25);
+    }
+    const lighting_channels_t *esc_c=&g_lighting_channels[raw.profile][esc];
+    assert(frame[esc_c->red]==255 && frame[esc_c->green]==0 && frame[esc_c->blue]==0);
+    /* Escape leaves the page. */
+    values[esc]=2400; step();
+    assert(!menu.velocity_page);
+    values[esc]=3900; step(); drain(); logged=0;
+    /* Level 10 always transmits full velocity; intermediate levels raise the floor. */
+    midi.velocity_start=10; assert(strike_velocity(0x14)==127);
+    midi.velocity_start=5;  assert(strike_velocity(0x14)==69); /* 56 + round(71*0.17778) */
+    midi.velocity_start=2;  assert(strike_velocity(0x1e)==34); /* 14 + round(113*0.17778) = 14+20 */
+    midi.velocity_start=1;  assert(strike_velocity(0x1e)==23);
+    assert(strike_velocity(0x21)==23); /* the setting is global, not per key */
+    midi.velocity_start=10; assert(strike_velocity(0x21)==127);
+    midi.velocity_start=1;
+    puts("PASS velocity start: Fn+V page, ten-step selection, bar lights, floor mapping, page exit");
+}
+
 static void janko_mode(void)
 {
     init(); toggle(); /* the layout only exists in MIDI mode */
@@ -490,7 +564,7 @@ static void text_display(void)
         values[fn]=values[ent]=2400; step(); assert(menu.text.length);
         keyboard_raw_frame(&raw,values,raw.count,profile,false);
         keyboard_config_t before=raw.engine.config;
-        keyboard_menu_frame(&menu,&raw,lower,upper,&before,frames/8,false,midi.lower_muted,&midi.music);
+        keyboard_menu_frame(&menu,&raw,lower,upper,&before,frames/8,false,midi.lower_muted,&midi.music,midi.velocity_start);
         assert(!menu.text.length);
         values[fn]=values[ent]=3900; step(); drain();
         values[fn]=values[ent]=2400; step(); assert(menu.text.length);
@@ -770,7 +844,7 @@ static void music_menus(void)
             if(fault==1) ++raw.revision;
             if(fault==2) {
                 keyboard_config_t before=raw.engine.config;
-                keyboard_menu_frame(&menu,&raw,lower,upper,&before,frames/8,true,midi.lower_muted,&midi.music);
+                keyboard_menu_frame(&menu,&raw,lower,upper,&before,frames/8,true,midi.lower_muted,&midi.music,midi.velocity_start);
             }
             if(fault==3) keyboard_menu_cancel(&menu);
             if(fault==4) values[0]=0;
@@ -896,6 +970,7 @@ static void sustain_pedal(void)
 int main(void)
 {
     default_mapping(); velocity_pressure_and_modes(); short_taps_and_overlap(); janko_mode();
+    velocity_start_mode();
     octave_and_duplicates(); faults_and_backpressure(); polyphony(); shift_and_filtered_strike(); octave_lights();
     text_display(); inverse_lighting(); menu_input_isolation(); wheels(); lower_rows(); music_data(); music_menus(); music_output(); sustain_pedal();
     printf("MIDI tests passed; controller state %zu bytes\n",sizeof(keyboard_midi_t));

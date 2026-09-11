@@ -27,6 +27,7 @@ a confirmation screen instead of clearing immediately.
 | Fn+R | RESET | Open RESET? confirmation (Y confirms, N cancels) |
 | Fn+Left Shift | LOWER-OFF / LOWER-ON | Toggle Caps/Shift-row MIDI notes (MIDI mode only; ignored in Jankó mode) |
 | Fn+J | JANKO | Toggle the built-in Jankó note layout (MIDI mode only) |
+| Fn+V | VELOCITY | Transmitted-velocity start, ten steps: `1` = 0%, `0` = 100% (MIDI mode only) |
 | Fn+E | KEY | Open root selection (MIDI mode only) |
 | Fn+S | SCALE | Open scale selection (MIDI mode only) |
 
@@ -65,6 +66,20 @@ Settings previews, confirmation and calibration take priority over keyboard
 shortcuts and clear held output. Native tests exercise all three layouts;
 compiled ARM tests check all twenty shortcuts, both release orders, repeated
 taps, arrow reports and green LED channel output using modeled ASIC input.
+
+## Transmitted-velocity start
+
+Fn+V is a white MIDI-only settings hint that opens a modal page modelled on the
+trigger-point editor: the number row becomes a ten-step bar, `1` is 0% and `0`
+is 100%, and the selected step lights green while the steps below it stay lit.
+Selecting a level applies immediately, so the bar can be auditioned without
+leaving the page; Escape leaves it. While the page is open no key reaches
+HID/MIDI, and leaving it requires all keys released before playing resumes.
+The page reports its level through `menu status` (`velocity_start=1..10`).
+Level 1 transmits the measured velocity unchanged, level 10 transmits every
+note at full velocity, and the steps between raise the floor of the curve
+(see [MIDI design](MIDI_DESIGN.md#transmitted-velocity-start)). The setting is
+RAM-only and survives mode switches.
 
 ## Jankó layout toggle
 

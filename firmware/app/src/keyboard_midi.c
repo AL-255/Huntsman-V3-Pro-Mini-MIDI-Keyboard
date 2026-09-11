@@ -29,6 +29,7 @@ void keyboard_midi_init(keyboard_midi_t *s)
     clear_voices(s);
     s->sent_bend=8192;
     s->music.scale=MIDI_SCALE_CHROMATIC;
+    s->velocity_start=1u; /* 0%: the measured velocity is transmitted unchanged */
 }
 
 void keyboard_midi_abort(keyboard_midi_t *s)
@@ -123,6 +124,22 @@ static uint8_t note_mapping(const keyboard_midi_t *s, unsigned sensor)
     if (!a || a->type != 2u) return s->mapping[sensor];
     const uint8_t note = janko_note(a);
     return note == MIDI_UNMAPPED ? s->mapping[sensor] : note;
+}
+
+/* Transmitted-velocity start: level 1 transmits the measured 0..1 estimate
+ * unchanged, level 10 transmits every note at full velocity, and the levels
+ * between raise the floor while keeping the top of the curve at 127. The
+ * modal editor keeps all keys out of HID/MIDI while it is open, so no voice
+ * cleanup or raw rearm is needed here; the value only affects future notes. */
+void keyboard_midi_set_velocity_start(keyboard_midi_t *s, unsigned level)
+{
+    if(!s->mode || level<1u || level>10u) return;
+    s->velocity_start=(uint8_t)level;
+}
+
+static uint8_t velocity_floor(const keyboard_midi_t *s)
+{
+    return (uint8_t)(((unsigned)(s->velocity_start ? s->velocity_start-1u : 0u) * 127u) / 9u);
 }
 
 void keyboard_midi_toggle_janko(keyboard_midi_t *s, keyboard_raw_t *raw)
@@ -291,7 +308,9 @@ void keyboard_midi_frame(keyboard_midi_t *s, keyboard_raw_t *raw,
                 /* The fit window just closed (a completed fit, or a
                  * triggering sample already below bottom-out): the buffered
                  * notes fire with the current velocity value. */
-                unsigned velocity = (unsigned)(raw->velocity[i].value * 127.0f + 0.5f);
+                const unsigned floor = velocity_floor(s);
+                unsigned velocity = floor +
+                    (unsigned)((127u - floor) * raw->velocity[i].value + 0.5f);
                 if (!velocity) velocity = 1; /* Note On zero means Note Off */
                 for (unsigned slot = 0; slot < 5u; ++slot) {
                     const uint8_t note = s->pending[i][slot];

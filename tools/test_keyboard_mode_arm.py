@@ -442,6 +442,64 @@ def janko_tests(args):
     print('PASS ARM Jankó mode: Fn+J toggle, staggered notes on MIDI packets, telemetry bit, lower-row bypass, mapping restored')
 
 
+def velocity_start_tests(args):
+    dev = LightingArm(args.elf,args.reference); dev.service(400)
+    labels = sensor_labels()[61]
+
+    def keys(**values):
+        for label,value in values.items(): dev.raw[labels.index(label)]=value
+        dev.service(20)
+
+    def release_all():
+        for index in range(len(labels)): dev.raw[index]=3900
+        dev.service(60)
+
+    def status():
+        dev.command('stream off'); dev.service(20)
+        reply = dev.command('menu status')
+        snapshot(dev,'stream gui')
+        return reply
+
+    def page(label):
+        keys(**{'Fn':2400,label:2400}); keys(**{'Fn':3900,label:3900}); dev.service(200)
+
+    def strike(label):
+        index = labels.index(label)
+        dev.midi_packets.clear()
+        values = dev.raw.copy(); values[index] = 3400; one_raw_frame(dev,values)
+        for value in (3300,3200,3100,3000):
+            values = dev.raw.copy(); values[index] = value; one_raw_frame(dev,values)
+        values = dev.raw.copy(); values[index] = 1400; one_raw_frame(dev,values)
+        dev.service(40)
+        velocity = next((p[3] for p in dev.midi_packets if p[0] == 9 and p[1] == 0x90), 0)
+        values = dev.raw.copy(); values[index] = 3900; one_raw_frame(dev,values)
+        dev.service(20); dev.midi_packets.clear()
+        return velocity
+
+    snapshot(dev,'stream gui')
+    keys(Fn=2400,Ent=2400); keys(Fn=3900,Ent=3900); dev.service(200)
+    assert b'velocity_start=1' in status()   # default: the measured velocity
+    assert strike('Q') == 23
+    # Fn+V opens the modal ten-step page: 1 is 0%, 0 is 100%.
+    page('V')
+    assert strike('Q') == 0                 # the page consumes playing keys
+    keys(**{'0':2400}); keys(**{'0':3900}); dev.service(200)
+    assert b'velocity_start=10' in status()
+    assert strike('Q') == 0                 # still inside the page
+    page('Esc')                             # Escape leaves the page
+    release_all()
+    assert strike('Q') == 127               # always full velocity
+    page('V'); keys(**{'5':2400}); keys(**{'5':3900}); dev.service(200)
+    assert b'velocity_start=5' in status()
+    page('Esc'); release_all()
+    assert strike('Q') == 69                # 56 + round(71 * 0.17778)
+    page('V'); keys(**{'1':2400}); keys(**{'1':3900}); dev.service(200)
+    page('Esc'); release_all()
+    assert strike('Q') == 23                # back to the measured value
+    assert b'velocity_start=1' in status()
+    print('PASS ARM velocity start: Fn+V modal page, ten-step digits, 0%/100% endpoints, floor mapping, Escape exit')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('elf'); parser.add_argument('--reference',required=True)
@@ -452,6 +510,7 @@ def main():
     midi_tests(args)
     velocity_tests(args)
     janko_tests(args)
+    velocity_start_tests(args)
     dev = LightingArm(args.elf,args.reference)
     # No CDC open: enumeration must be enough for scanning and keyboard output.
     dev.control_out(bytes.fromhex('21 22 00 00 04 00 00 00'))

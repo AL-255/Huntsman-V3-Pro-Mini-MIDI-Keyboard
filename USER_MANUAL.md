@@ -373,6 +373,26 @@ it, and aftertouch follows the greater travel. The second key does not
 retrigger that pitch or replace its attack velocity. Different pitches remain
 independent; this is channel-1 polyphonic MIDI, not MPE.
 
+### Set the transmitted-velocity start
+
+In MIDI mode, hold **Fn+V** to preview `VELOCITY`, then release either key to
+open the ten-step editor. The number row becomes a bar; press a digit to pick
+the starting point of the velocity curve and press **Esc** to leave:
+
+```text
+1    2    3    4    5    6    7    8    9    0
+0%  11%  22%  33%  44%  56%  67%  78%  89% 100%
+```
+
+`1` transmits the measured velocity unchanged, so soft presses stay soft.
+`0` transmits every note at full velocity. The steps between raise the floor of
+the curve: a soft press is lifted to the floor while harder presses still reach
+full velocity, which is useful when a host instrument ignores low velocities.
+The selected step is green and the steps below it stay lit; the page consumes
+all key input, so release every key after pressing **Esc** before playing
+again. The setting is global, RAM-only, applies in both playing layouts, and
+is reported by `menu status` as `velocity_start=1..10`.
+
 ### Play the built-in Jankó layout
 
 In MIDI mode, hold **Fn+J** to preview `JANKO`, then release either key to

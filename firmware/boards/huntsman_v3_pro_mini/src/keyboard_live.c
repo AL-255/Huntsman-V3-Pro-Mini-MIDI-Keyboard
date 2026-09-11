@@ -347,6 +347,7 @@ bool keyboard_live_command(const char *line)
         value(" lower_muted=",s_midi.lower_muted);
         value(" root=",s_midi.music.root); value(" scale=",s_midi.music.scale);
         value(" music_page=",s_menu.music_page); value(" janko=",s_midi.janko);
+        value(" velocity_start=",s_midi.velocity_start);
         debug_write(" key="); debug_write(midi_root_names[s_midi.music.root]);
         debug_write(" scale_name="); debug_write(midi_scales[s_midi.music.scale].name);
         debug_write("\r\n");

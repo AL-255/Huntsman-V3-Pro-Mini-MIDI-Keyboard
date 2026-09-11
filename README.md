@@ -87,6 +87,9 @@ remain separate indicators. MIDI velocity and aftertouch are unchanged.
   immediately ends the animation and executes the action (visible on the next LED update).
   Enter then remains green for keyboard or blue for MIDI, at the same full
   channel intensity as unpressed note keys, scaled by global brightness.
+- **Fn+V** opens the transmitted-velocity start editor in MIDI mode: a
+  ten-step bar on the number row where `1` is 0% (measured velocity) and `0`
+  is 100% (every note at full velocity); Escape leaves the page.
 - **Fn+J** toggles the built-in **Jankó** playing layout in MIDI mode: the
   letter, number and punctuation rows adopt a staggered whole-tone mapping
   without touching the configured notes, and the Fn+Left Shift lower-row mute

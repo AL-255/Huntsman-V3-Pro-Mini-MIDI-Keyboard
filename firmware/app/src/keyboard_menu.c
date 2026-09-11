@@ -23,6 +23,7 @@ static const menu_option_t options[MENU_OPTION_COUNT] = {
     [MENU_KEY-1]={0x08,0,OPTION_MIDI,"KEY"},
     [MENU_SCALE-1]={0x16,0,OPTION_MIDI,"SCALE"},
     [MENU_JANKO-1]={0x0d,0,OPTION_MIDI,"JANKO"}, /* J: staggered layout toggle */
+    [MENU_VELOCITY-1]={0x19,0,OPTION_MIDI,"VELOCITY"}, /* V: transmitted-velocity start */
 };
 _Static_assert(MENU_OPTION_COUNT<=16,"menu edge bitmap too small");
 
@@ -41,6 +42,7 @@ void keyboard_menu_cancel(keyboard_menu_t *s)
     s->brightness_session=false;
     s->reset_confirmation=s->confirmation_ready=false;
     s->music_page=MENU_NONE; s->choice_ready=false; s->choice_sensor=255;
+    s->velocity_page=false;
     keyboard_text_stop(&s->text);
 }
 
@@ -130,6 +132,31 @@ static int music_choice(const keyboard_menu_t *s, unsigned sensor)
     return s->music_page==MENU_KEY ? midi_music_root_selector(a->arg1) : midi_music_scale_selector(a->arg1);
 }
 
+/* Transmitted-velocity start page, modelled on the trigger-point editor:
+ * the number row is a ten-step bar, key 1 is 0% and key 0 is 100%. The
+ * selection applies immediately; Escape leaves the page. Menu input never
+ * reaches HID/MIDI, so the bar can be auditioned without playing notes. */
+static uint8_t velocity_page_frame(keyboard_menu_t *s, keyboard_raw_t *raw)
+{
+    if(!raw->midi_mode || raw->revision!=s->pending_revision) {
+        keyboard_menu_cancel(s); keyboard_raw_invalidate(raw); return MENU_NONE;
+    }
+    const bool ready=s->choice_ready;
+    if(raw->armed) s->choice_ready=true; /* all keys released after page entry */
+    keyboard_raw_invalidate(raw); /* menu input never reaches HID/MIDI */
+    if(!ready) return MENU_NONE;
+    unsigned held=0, sensor=0;
+    for(unsigned i=0;i<raw->count;++i) if(raw->raw[i]<raw->press[i]) {
+        if(s->keys[i]==keyboard_layout(s->profile)->escape) { keyboard_menu_cancel(s); return MENU_NONE; }
+        ++held; sensor=i;
+    }
+    if(held!=1u) return MENU_NONE; /* one digit at a time */
+    const uint8_t digit=keyboard_editor_digit(s->profile,s->keys[sensor]);
+    if(!digit || digit==s->selection) return MENU_NONE;
+    s->selection=digit;
+    return MENU_VELOCITY_SET;
+}
+
 static uint8_t music_page_frame(keyboard_menu_t *s, keyboard_raw_t *raw, uint32_t now)
 {
     if(!raw->midi_mode || raw->revision!=s->pending_revision) {
@@ -163,7 +190,7 @@ static uint8_t music_page_frame(keyboard_menu_t *s, keyboard_raw_t *raw, uint32_
 uint8_t keyboard_menu_frame(keyboard_menu_t *s, keyboard_raw_t *raw,
                          const uint16_t *lower, const uint16_t *upper,
                          const keyboard_config_t *before, uint32_t now, bool calibration, bool lower_muted,
-                         const midi_music_config_t *music)
+                         const midi_music_config_t *music, uint8_t velocity_start)
 {
     if (raw->profile && raw->profile!=s->profile) layout(s,raw);
     /* Only an explicit dirty actuation commit changes raw thresholds. Faults
@@ -188,6 +215,7 @@ uint8_t keyboard_menu_frame(keyboard_menu_t *s, keyboard_raw_t *raw,
         keyboard_menu_cancel(s); return MENU_NONE;
     }
     if(s->music_page) return music_page_frame(s,raw,now);
+    if(s->velocity_page) return velocity_page_frame(s,raw);
     if (s->reset_confirmation) {
         if (raw->revision!=s->pending_revision) {
             keyboard_menu_cancel(s); keyboard_raw_invalidate(raw); return MENU_NONE;
@@ -225,6 +253,12 @@ uint8_t keyboard_menu_frame(keyboard_menu_t *s, keyboard_raw_t *raw,
         if (action==MENU_RESET) {
             s->reset_confirmation=true;
             keyboard_text_start(&s->text,raw->profile,"RESET?",now);
+            return MENU_NONE;
+        }
+        if(action==MENU_VELOCITY) {
+            s->velocity_page=true;
+            s->choice_ready=false;
+            s->selection=velocity_start ? velocity_start : 1u; /* 1..10 */
             return MENU_NONE;
         }
         if(action==MENU_KEY || action==MENU_SCALE) {
@@ -282,6 +316,19 @@ void keyboard_menu_lights(keyboard_menu_t *s, const keyboard_raw_t *raw,
         }
         if(s->music_page) for(unsigned i=0;i<raw->count;++i)
             if(s->keys[i]==keyboard_layout(s->profile)->escape) color(s->profile,i,frame,255,0,0);
+        return;
+    }
+    if(s->velocity_page) {
+        memset(frame,0,LIGHTING_FRAME_SIZE);
+        for(unsigned i=0;i<raw->count;++i) {
+            const uint8_t digit=keyboard_editor_digit(s->profile,s->keys[i]);
+            if(digit) {
+                const uint8_t v=digit<=s->selection?255u:25u;
+                color(s->profile,i,frame,v,v,v);
+                if(digit==s->selection) color(s->profile,i,frame,0,255,0);
+            }
+            if(s->keys[i]==keyboard_layout(s->profile)->escape) color(s->profile,i,frame,255,0,0);
+        }
         return;
     }
     if(s->music_page) {

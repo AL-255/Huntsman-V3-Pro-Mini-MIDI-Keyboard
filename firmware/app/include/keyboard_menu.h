@@ -7,8 +7,8 @@
 
 enum { MENU_NONE, MENU_CALIBRATION, MENU_TRIGGER, MENU_MODE, MENU_LIGHT_DOWN, MENU_LIGHT_UP,
        MENU_RAPID, MENU_RESET, MENU_LOWER, MENU_KEY, MENU_SCALE, MENU_JANKO,
-       MENU_SELECT_KEY, MENU_SELECT_SCALE };
-#define MENU_OPTION_COUNT MENU_JANKO
+       MENU_VELOCITY, MENU_VELOCITY_SET, MENU_SELECT_KEY, MENU_SELECT_SCALE };
+#define MENU_OPTION_COUNT MENU_VELOCITY
 
 typedef struct {
     uint32_t bar_at, pending_revision;
@@ -18,6 +18,7 @@ typedef struct {
     uint8_t brightness, bar, pending, pending_sensor;
     uint8_t music_page, choice_sensor, selection;
     bool choice_ready;
+    bool velocity_page;
     bool brightness_session;
     bool reset_confirmation, confirmation_ready;
     keyboard_text_t text;
@@ -27,7 +28,7 @@ void keyboard_menu_init(keyboard_menu_t *s);
 uint8_t keyboard_menu_frame(keyboard_menu_t *s, keyboard_raw_t *raw,
                          const uint16_t *lower, const uint16_t *upper,
                          const keyboard_config_t *before, uint32_t now, bool calibration, bool lower_muted,
-                         const midi_music_config_t *music);
+                         const midi_music_config_t *music, uint8_t velocity_start);
 void keyboard_menu_lights(keyboard_menu_t *s, const keyboard_raw_t *raw,
                           const uint16_t *lower, const uint16_t *upper,
                           uint8_t *frame, uint32_t now, bool midi, bool calibration,

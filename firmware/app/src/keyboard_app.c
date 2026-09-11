@@ -59,10 +59,11 @@ void keyboard_app_frame(keyboard_app_t *s,const uint16_t *samples,uint8_t count,
         s->frame_valid=false; /* wait for freshly initialized board samples */
     }
     uint8_t action=keyboard_menu_frame(s->menu,raw,lo,hi,&before,now,
-        calibration_active(s->cal),s->midi->lower_muted,&s->midi->music);
+        calibration_active(s->cal),s->midi->lower_muted,&s->midi->music,s->midi->velocity_start);
     if(action==MENU_MODE) keyboard_midi_toggle(s->midi,raw,now);
     if(action==MENU_LOWER) keyboard_midi_toggle_lower(s->midi,raw);
     if(action==MENU_JANKO) keyboard_midi_toggle_janko(s->midi,raw);
+    if(action==MENU_VELOCITY_SET) keyboard_midi_set_velocity_start(s->midi,s->menu->selection);
     if(action==MENU_SELECT_KEY) (void)keyboard_midi_select_music(s->midi,raw,s->menu->selection,s->midi->music.scale);
     if(action==MENU_SELECT_SCALE) (void)keyboard_midi_select_music(s->midi,raw,s->midi->music.root,s->menu->selection);
     if(action==MENU_CALIBRATION) (void)keyboard_app_calibrate(s,now,s->frame_valid);

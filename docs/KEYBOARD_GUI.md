@@ -23,7 +23,7 @@ python3 tools/keyboard_gui.py --device /dev/ttyACM1   # explicit node override
 
 Current application: `build-keyboard-fn-menu/huntsman_firmware.bin`, exactly 131072 bytes,
 linked at `0x20000000`, sha256
-`e84d72d9870f2e5935ca5f01abea3f167d71cc31953757aaa9f9aaea35e38a3e`
+`5942e85ec4f2272fdd431febe6af91d06f531e1570289bce848081e58166dd7e`
 (flashed with the sibling updater's application-only path and verified live:
 GUI telemetry, pinned-sensor stream at ~1.35 k samples/s, stream switch-back,
 bottom-out velocity windows at the shared 1500 threshold, and a physical

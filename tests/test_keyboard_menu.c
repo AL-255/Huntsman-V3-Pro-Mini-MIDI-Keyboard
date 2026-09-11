@@ -15,7 +15,7 @@ static void frame(void)
 {
     keyboard_config_t before=raw.engine.config;
     keyboard_raw_frame(&raw,samples,raw.count,raw.profile,true);
-    last_action=keyboard_menu_frame(&menu,&raw,lower,upper,&before,now,false,false,NULL);
+    last_action=keyboard_menu_frame(&menu,&raw,lower,upper,&before,now,false,false,NULL,1u);
     ++now;
 }
 static void init(unsigned profile)
@@ -260,7 +260,7 @@ static void reset_confirmation(void)
         if (fault==3) keyboard_menu_cancel(&menu);
         if (fault==4) {
             keyboard_config_t before=raw.engine.config;
-            assert(!keyboard_menu_frame(&menu,&raw,lower,upper,&before,now,true,false,NULL));
+            assert(!keyboard_menu_frame(&menu,&raw,lower,upper,&before,now,true,false,NULL,1u));
         }
         frame(); assert(!menu.reset_confirmation && !last_action);
         samples[menu.y]=500; frame(); assert(!last_action);
