@@ -108,10 +108,25 @@ geometry; firmware behavior and native polyphony tests cover all three layouts.
 
 ## Physical row enable mask
 
-The row gate intersects with the [root/scale filter](MIDI_SCALES.md).
+The row gate intersects with the [root/scale filter](MIDI_SCALES.md), and is
+bypassed by the Jankó layout (below).
 Fn+E selects the root; Fn+S selects the scale. Both are table-driven modal
 menus, with preview while a choice is held and commit on its release.
 Only enabled, in-scale, in-range notes receive normal note backlighting.
+
+Fn+J toggles the built-in **Jankó layout**, a RAM-only replacement note
+mapping for the letter, number and punctuation rows: two whole-tone rows
+staggered against each other, so the physical keys form the arrangement
+requested for this keyboard. The table lives in `keyboard_midi.c` keyed by
+HID usage, so it stays portable; the two Shift keys are matched by their
+modifier mask, and keys outside the table (Enter, Backspace, the bottom-row
+controls) keep their configured mapping and role. The toggle uses the same
+preview/release menu path, is available in MIDI mode only, aborts voices and
+invalidates raw arming. While it is active the Fn hint on J turns green, HKG6
+reports it in flags bit 6, and `menu status` prints `janko=1`. The configured
+mapping is not modified; leaving the layout restores it exactly. The
+root/scale filter still applies to Jankó notes, and **Fn+Left Shift is
+ineffective while the layout is active**: the lower rows always play.
 
 Fn+Left Shift toggles a RAM-only `lower_muted` flag via the shared preview/release menu.
 The layout setup caches the Caps/Shift rows in a sensor bitmap through the

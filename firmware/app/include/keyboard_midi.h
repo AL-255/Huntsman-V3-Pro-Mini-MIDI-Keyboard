@@ -17,7 +17,7 @@ typedef struct {
     uint8_t modulation, sent_modulation, wheel_sweep;
     uint8_t profile, mode, phase, pressure_cursor;
     uint8_t lower_rows[MT_KEY_BITMAP_BYTES]; /* board-described group, independent of mapping */
-    bool lower_muted, sustain;
+    bool lower_muted, sustain, janko;
     midi_music_config_t music;
     int8_t octave;
     bool was_armed, pressure_sweep;
@@ -28,6 +28,7 @@ void keyboard_midi_init(keyboard_midi_t *s);
 void keyboard_midi_abort(keyboard_midi_t *s);
 void keyboard_midi_toggle(keyboard_midi_t *s, keyboard_raw_t *raw, uint32_t now);
 void keyboard_midi_toggle_lower(keyboard_midi_t *s, keyboard_raw_t *raw);
+void keyboard_midi_toggle_janko(keyboard_midi_t *s, keyboard_raw_t *raw);
 bool keyboard_midi_select_music(keyboard_midi_t *s, keyboard_raw_t *raw, unsigned root, unsigned scale);
 void keyboard_midi_guard(keyboard_midi_t *s, keyboard_raw_t *raw);
 void keyboard_midi_frame(keyboard_midi_t *s, keyboard_raw_t *raw,

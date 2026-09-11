@@ -22,6 +22,7 @@ static const menu_option_t options[MENU_OPTION_COUNT] = {
     [MENU_LOWER-1]={0,2,OPTION_MIDI,NULL}, /* Left Shift */
     [MENU_KEY-1]={0x08,0,OPTION_MIDI,"KEY"},
     [MENU_SCALE-1]={0x16,0,OPTION_MIDI,"SCALE"},
+    [MENU_JANKO-1]={0x0d,0,OPTION_MIDI,"JANKO"}, /* J: staggered layout toggle */
 };
 _Static_assert(MENU_OPTION_COUNT<=16,"menu edge bitmap too small");
 
@@ -269,7 +270,8 @@ static void color(uint8_t profile, unsigned sensor, uint8_t *frame,
 
 void keyboard_menu_lights(keyboard_menu_t *s, const keyboard_raw_t *raw,
                           const uint16_t *lower, const uint16_t *upper,
-                          uint8_t *frame, uint32_t now, bool midi, bool calibration)
+                          uint8_t *frame, uint32_t now, bool midi, bool calibration,
+                          bool janko)
 {
     if (!s->profile) return;
     if (calibration) return; /* calibration feedback stays visible at brightness zero */
@@ -341,8 +343,11 @@ void keyboard_menu_lights(keyboard_menu_t *s, const keyboard_raw_t *raw,
                 if (keyboard_shortcut_usage(s->profile,s->keys[i])) color(s->profile,i,frame,0,255,0);
         }
         for(unsigned i=0;i<MENU_OPTION_COUNT;++i)
-            if(options[i].modes & (midi?OPTION_MIDI:OPTION_KEYBOARD))
-                color(s->profile,s->option_sensors[i],frame,255,255,255);
+            if(options[i].modes & (midi?OPTION_MIDI:OPTION_KEYBOARD)) {
+                /* The active Jankó layout keeps its hint green, not white. */
+                const bool active = (i+1u)==MENU_JANKO && janko;
+                color(s->profile,s->option_sensors[i],frame,255,255,active?0:255);
+            }
         color(s->profile,s->enter,frame,0,midi?255:0,midi?0:255);
         if (brightness<25u) brightness=25u; /* keep brightness-up discoverable */
     }

@@ -87,6 +87,11 @@ remain separate indicators. MIDI velocity and aftertouch are unchanged.
   immediately ends the animation and executes the action (visible on the next LED update).
   Enter then remains green for keyboard or blue for MIDI, at the same full
   channel intensity as unpressed note keys, scaled by global brightness.
+- **Fn+J** toggles the built-in **Jankó** playing layout in MIDI mode: the
+  letter, number and punctuation rows adopt a staggered whole-tone mapping
+  without touching the configured notes, and the Fn+Left Shift lower-row mute
+  is inactive while it is on. The J hint turns green while active; see the
+  [user manual](USER_MANUAL.md#play-the-built-in-jankó-layout).
 - **Fn+R** previews `RESET`; release opens `RESET?`, with **Y green / N red**
   at full brightness. Release all keys, then press **Y** to clear our two
   saved-calibration pages or **N** to cancel. Confirmation consumes these keys;

@@ -397,6 +397,51 @@ def velocity_tests(args):
     print('PASS ARM DMA -> 65 independent velocity fits, bottom-out windows, retrigger ownership, HID disabled, atomic all-key command/readback')
 
 
+def janko_tests(args):
+    dev = LightingArm(args.elf,args.reference); dev.service(400)
+    labels = sensor_labels()[61]
+
+    def keys(**values):
+        for label,value in values.items(): dev.raw[labels.index(label)]=value
+        dev.service(20)
+
+    def strike(label,note):
+        index = labels.index(label)
+        dev.midi_packets.clear()
+        values = dev.raw.copy(); values[index] = 3400; one_raw_frame(dev,values)
+        for value in (3300,3200,3100,3000):
+            values = dev.raw.copy(); values[index] = value; one_raw_frame(dev,values)
+        values = dev.raw.copy(); values[index] = 1400; one_raw_frame(dev,values)  # bottom-out fires the note
+        dev.service(40)
+        assert bytes([9,0x90,note,23]) in dev.midi_packets, (label,dev.midi_packets)
+        values = dev.raw.copy(); values[index] = 3900; one_raw_frame(dev,values)
+        dev.service(20); dev.midi_packets.clear()
+
+    snapshot(dev,'stream gui')
+    keys(Fn=2400,Ent=2400); keys(Fn=3900,Ent=3900); dev.service(200)
+    assert snapshot(dev).performance_mode == 1  # MIDI mode
+    # Fn+J toggles the built-in Jankó layout on release.
+    keys(Fn=2400,J=2400); keys(Fn=3900,J=3900); dev.service(200)
+    assert snapshot(dev).flags & 64, snapshot(dev).flags
+    dev.command('stream off'); dev.service(20)
+    assert b'janko=1' in dev.command('menu status')
+    snapshot(dev,'stream gui')
+    for label,note in (('Esc',58),('1',60),('Tab',71),('Q',61),('Y',83),(']',95),('LSh',61),('B',83),('RSh',95)):
+        strike(label,note)
+    # The lower row stays enabled in Jankó mode: Fn+Left Shift is ineffective.
+    keys(Fn=2400,LSh=2400); keys(Fn=3900,LSh=3900); dev.service(200)
+    dev.command('stream off'); dev.service(20)
+    assert b'lower_muted=1' in dev.command('menu status')
+    snapshot(dev,'stream gui')
+    strike('Z',63)
+    keys(Fn=2400,LSh=2400); keys(Fn=3900,LSh=3900); dev.service(200)
+    # Leaving the layout restores the configured mapping (Q is D5 again).
+    keys(Fn=2400,J=2400); keys(Fn=3900,J=3900); dev.service(200)
+    assert not snapshot(dev).flags & 64
+    strike('Q',74)
+    print('PASS ARM Jankó mode: Fn+J toggle, staggered notes on MIDI packets, telemetry bit, lower-row bypass, mapping restored')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('elf'); parser.add_argument('--reference',required=True)
@@ -406,6 +451,7 @@ def main():
     music_tests(args)
     midi_tests(args)
     velocity_tests(args)
+    janko_tests(args)
     dev = LightingArm(args.elf,args.reference)
     # No CDC open: enumeration must be enough for scanning and keyboard output.
     dev.control_out(bytes.fromhex('21 22 00 00 04 00 00 00'))

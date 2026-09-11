@@ -75,7 +75,7 @@ static void gui_snapshot(uint32_t now)
     out[7] = s_raw.profile; out[8] = s_raw.count;
     out[9] = s_raw.enabled | (s_raw.armed << 1u) | (s_raw.valid << 2u) |
              ((s_transport.phase == OPT_FAULT) << 3u) | ((s_lighting.phase == LIGHT_FAULT) << 4u) |
-             ((s_raw.engine.config.fn != 0u) << 5u);
+             ((s_raw.engine.config.fn != 0u) << 5u) | ((s_midi.janko != 0u) << 6u);
     out[10] = s_gui_result;
     out[11] = s_raw.engine.config.mode;
     gui32(out + 12, s_gui_sequence++); gui32(out + 16, s_raw.revision);
@@ -346,7 +346,7 @@ bool keyboard_live_command(const char *line)
         value(" reset_confirm=",s_menu.reset_confirmation); value(" ready=",s_menu.confirmation_ready);
         value(" lower_muted=",s_midi.lower_muted);
         value(" root=",s_midi.music.root); value(" scale=",s_midi.music.scale);
-        value(" music_page=",s_menu.music_page);
+        value(" music_page=",s_menu.music_page); value(" janko=",s_midi.janko);
         debug_write(" key="); debug_write(midi_root_names[s_midi.music.root]);
         debug_write(" scale_name="); debug_write(midi_scales[s_midi.music.scale].name);
         debug_write("\r\n");

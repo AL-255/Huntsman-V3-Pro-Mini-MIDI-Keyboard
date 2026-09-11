@@ -373,6 +373,35 @@ it, and aftertouch follows the greater travel. The second key does not
 retrigger that pitch or replace its attack velocity. Different pitches remain
 independent; this is channel-1 polyphonic MIDI, not MPE.
 
+### Play the built-in Jankó layout
+
+In MIDI mode, hold **Fn+J** to preview `JANKO`, then release either key to
+switch the playing notes to the built-in staggered whole-tone layout. Release
+all keys before playing again. The J hint turns green while it is active, and
+`menu status` reports `janko=1`.
+
+```text
+Esc  1   2   3   4   5   6   7   8   9   0   -   =
+A#3  C4  D4  E4  F#4 G#4 A#4 C5  D5  E5  F#5 G#5 A#5
+
+Tab  Q   W   E   R   T   Y   U   I   O   P   [   ]
+B4   C#4 D#4 F4  G4  A4  B5  C#5 D#5 F5  G5  A5  B6
+
+Cap  A   S   D   F   G   H   J   K   L   ;   '
+C4   D4  E4  F#4 G#4 A#4 C5  D5  E5  F#5 G#5 A#5
+
+LSh  Z   X   C   V   B   N   M   ,   .   /   RSh
+C#4  D#4 F4  G4  A4  B5  C#5 D#5 F5  G5  A5  B6
+```
+
+Holding Fn+J again previews `JANKO` and switches back; the notes you
+configured are restored exactly, because the layout never edits your mapping.
+Enter, Backspace and the bottom-row octave/bend/modulation/sustain controls
+keep their normal behavior, and the root/scale filter still applies to the
+layout's notes. **Fn+Left Shift is ineffective while the layout is active:**
+the lower rows always play. The GUI shows `JANKÓ layout (Fn+J)` in its status
+line and labels the keys with the layout's notes until you switch back.
+
 ### Use only the upper playing range
 
 In MIDI mode, hold **Fn+Left Shift** to preview `LOWER-OFF`, then release either key.

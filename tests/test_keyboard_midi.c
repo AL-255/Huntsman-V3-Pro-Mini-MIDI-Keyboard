@@ -43,6 +43,7 @@ static void step(void)
     if (action==MENU_MODE)
         keyboard_midi_toggle(&midi,&raw,frames/8);
     if (action==MENU_LOWER) keyboard_midi_toggle_lower(&midi,&raw);
+    if (action==MENU_JANKO) keyboard_midi_toggle_janko(&midi,&raw);
     if (action==MENU_SELECT_KEY) assert(keyboard_midi_select_music(&midi,&raw,menu.selection,midi.music.scale));
     if (action==MENU_SELECT_SCALE) assert(keyboard_midi_select_music(&midi,&raw,midi.music.root,menu.selection));
     keyboard_midi_frame(&midi,&raw,lower,upper,frames++/8);
@@ -71,6 +72,33 @@ static void toggle(void)
     step(); assert(midi.mode==(mode^1));
     drain(); step(); logged=0;
 }
+static unsigned events(unsigned status,unsigned note);
+static void janko_toggle(void)
+{
+    const unsigned fn=fn_sensor(), j=sensor(0x0d,0);
+    const bool state=midi.janko;
+    values[fn]=values[j]=2400; step();
+    assert(midi.janko==state && !raw.armed && menu.pending==MENU_JANKO);
+    for (unsigned i=0; i<20; ++i) step();
+    assert(midi.janko==state); /* holding previews without toggling */
+    values[fn]=values[j]=3900;
+    step(); assert(midi.janko==!state);
+    drain(); step(); logged=0;
+}
+static void janko_strike(unsigned usage, unsigned expected, unsigned modifier)
+{
+    /* Shift keys carry their modifier mask with a zero usage in the tables. */
+    const unsigned key=sensor((uint8_t)(modifier ? 0 : usage),(uint8_t)modifier);
+    logged=0;
+    values[key]=2400; step();
+    for (unsigned frame=0; frame<9; ++frame) { values[key]-=100; step(); }
+    values[key]=1400; step(); /* bottom-out closes the window and fires the note */
+    drain();
+    assert(events(0x90,expected)==1);
+    values[key]=3900; step(); drain();
+    assert(events(0x80,expected)==1);
+}
+
 static unsigned events(unsigned status,unsigned note)
 {
     unsigned n=0;
@@ -187,6 +215,59 @@ static void faults_and_backpressure(void)
     keyboard_raw_invalidate(&raw); keyboard_midi_guard(&midi,&raw); drain();
     assert(!midi.refs[72] && !midi.count);
 }
+static void janko_mode(void)
+{
+    init(); toggle(); /* the layout only exists in MIDI mode */
+    /* Configured mapping while the mode is off: Q plays D5 (74). */
+    janko_strike(0x14,74,0);
+    janko_toggle(); assert(midi.janko);
+    /* Staggered whole-tone rows from the specified Jankó mapping. */
+    janko_strike(0x29,58,0); /* Esc  A#3 */
+    janko_strike(0x1e,60,0); /* 1    C4  */
+    janko_strike(0x2e,82,0); /* =    A#5 */
+    janko_strike(0x2b,71,0); /* Tab  B4  */
+    janko_strike(0x14,61,0); /* Q    C#4 */
+    janko_strike(0x1c,83,0); /* Y    B5  */
+    janko_strike(0x30,95,0); /* ]    B6  */
+    janko_strike(0x39,60,0); /* Caps C4  */
+    janko_strike(0x0d,74,0); /* J    D5  */
+    janko_strike(0x34,82,0); /* '    A#5 */
+    janko_strike(0xe1,61,2); /* LSh  C#4 */
+    janko_strike(0x1d,63,0); /* Z    D#4 */
+    janko_strike(0x05,83,0); /* B    B5  */
+    janko_strike(0xe5,95,32);/* RSh  B6  */
+    /* Keys outside the table keep their configured mapping (Enter/Backspace). */
+    janko_strike(0x2a,94,0); /* BkS  A#6 per the default table */
+    /* Fn+Left Shift is ineffective: the lower row stays enabled. */
+    keyboard_midi_toggle_lower(&midi,&raw);
+    assert(midi.lower_muted);
+    for (unsigned i=0;i<65;++i) values[i]=3900;
+    step(); drain(); logged=0; /* flush the cleanup burst; the mute stays on */
+    janko_strike(0x1d,63,0); /* Z is a lower-row key and still plays D#4 */
+    keyboard_midi_toggle_lower(&midi,&raw);
+    for (unsigned i=0;i<65;++i) values[i]=3900;
+    step(); drain(); logged=0;
+    janko_strike(0x1d,63,0);
+    /* Leaving the mode restores the configured mapping. */
+    janko_toggle(); assert(!midi.janko);
+    janko_strike(0x14,74,0);
+    /* The Fn hint for J is white normally and green while the layout is active. */
+    uint8_t frame[LIGHTING_FRAME_SIZE];
+    const unsigned fn=fn_sensor(), j=sensor(0x0d,0);
+    const lighting_channels_t *c=&g_lighting_channels[raw.profile][j];
+    values[fn]=2400; step();
+    memset(frame,0,sizeof(frame));
+    keyboard_menu_lights(&menu,&raw,lower,upper,frame,0,true,false,false);
+    assert(frame[c->red]==255 && frame[c->green]==255 && frame[c->blue]==255);
+    midi.janko=true;
+    memset(frame,0,sizeof(frame));
+    keyboard_menu_lights(&menu,&raw,lower,upper,frame,0,true,false,true);
+    assert(frame[c->red]==255 && frame[c->green]==255 && frame[c->blue]==0);
+    midi.janko=false;
+    values[fn]=3900; step(); drain();
+    puts("PASS Jankó mode: Fn+J toggle, staggered mapping, lower-row override, configured mapping restored");
+}
+
 static void polyphony(void)
 {
     for (unsigned profile=1;profile<=3;++profile) {
@@ -259,7 +340,7 @@ static void octave_lights(void)
             midi.mode=mode; menu.brightness=level;
             memset(rgb,255,sizeof(rgb));
             keyboard_midi_lights(&midi,rgb,0);
-            keyboard_menu_lights(&menu,&raw,lower,upper,rgb,0,mode,false);
+            keyboard_menu_lights(&menu,&raw,lower,upper,rgb,0,mode,false,false);
             unsigned pwm=keyboard_menu_brightness(&menu);
             for(unsigned i=0;i<raw.count;++i) {
                 c=&g_lighting_channels[profile-1][i];
@@ -814,7 +895,7 @@ static void sustain_pedal(void)
 
 int main(void)
 {
-    default_mapping(); velocity_pressure_and_modes(); short_taps_and_overlap();
+    default_mapping(); velocity_pressure_and_modes(); short_taps_and_overlap(); janko_mode();
     octave_and_duplicates(); faults_and_backpressure(); polyphony(); shift_and_filtered_strike(); octave_lights();
     text_display(); inverse_lighting(); menu_input_isolation(); wheels(); lower_rows(); music_data(); music_menus(); music_output(); sustain_pedal();
     printf("MIDI tests passed; controller state %zu bytes\n",sizeof(keyboard_midi_t));

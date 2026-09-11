@@ -78,7 +78,7 @@ static void editor(void)
     assert(raw.engine.config.actuation==10 && raw.revision==0);
     uint8_t leds[LIGHTING_FRAME_SIZE];
     memset(leds,7,sizeof(leds)); menu.brightness=0;
-    keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,false,false);
+    keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,false,false,false);
     rgb(sensor(0x0b),leds,0,255,0); rgb(sensor(2),leds,25,25,25);
     rgb(sensor(KEY_ID_ESC),leds,255,0,0); rgb(menu.enter,leds,0,0,0);
     key(KEY_ID_ESC,true);
@@ -106,7 +106,7 @@ static void brightness_and_hints(void)
         key(KEY_ID_FN,true);
         uint8_t leds[LIGHTING_FRAME_SIZE];
         memset(leds,99,sizeof(leds));
-        keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,false,false);
+        keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,false,false,false);
         for (unsigned i=0; i<raw.count; ++i) {
             unsigned v=(i==menu.c || i==menu.tab || i==menu.k || i==menu.l || i==menu.caps || i==menu.r)?255:0;
             rgb(i,leds,v,keyboard_shortcut_usage(profile,menu.keys[i])?255:v,i==menu.enter?255:v);
@@ -123,7 +123,7 @@ static void brightness_and_hints(void)
         assert(menu.brightness==0 && keyboard_menu_brightness(&menu)==0);
         key(KEY_ID_FN,true);
         memset(leds,99,sizeof(leds));
-        keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,true,false);
+        keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,true,false,false);
         rgb(menu.l,leds,25,25,25); rgb(menu.c,leds,0,0,0); rgb(menu.tab,leds,0,0,0);
         samples[menu.l]=500; now=UINT32_MAX-100; frame();
         assert(menu.brightness==0 && menu.pending==MENU_LIGHT_UP);
@@ -136,9 +136,9 @@ static void brightness_and_hints(void)
         }
         assert(menu.brightness==19);
         menu.brightness=0; key(KEY_ID_FN,false);
-        memset(leds,99,sizeof(leds)); keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,false,false);
+        memset(leds,99,sizeof(leds)); keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,false,false,false);
         for (unsigned i=0; i<sizeof(leds); ++i) assert(!leds[i]);
-        memset(leds,99,sizeof(leds)); keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,false,true);
+        memset(leds,99,sizeof(leds)); keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,false,true,false);
         for (unsigned i=0; i<sizeof(leds); ++i) assert(leds[i]==99);
     }
 }
@@ -208,7 +208,7 @@ static void repeated_brightness(void)
             assert(last_action==MENU_LIGHT_DOWN && menu.brightness==9 && !raw.armed);
             frame(); assert(menu.brightness_session && !menu.pending && !raw.armed);
             uint8_t leds[LIGHTING_FRAME_SIZE]; memset(leds,99,sizeof(leds));
-            keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,midi,false);
+            keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,midi,false,false);
             rgb(menu.k,leds,56,56,56); rgb(menu.l,leds,56,56,56);
             samples[menu.l]=500; frame(); assert(menu.pending==MENU_LIGHT_UP);
             samples[menu.l]=4000; frame(); assert(last_action==MENU_LIGHT_UP && menu.brightness==10);
@@ -241,7 +241,7 @@ static void reset_confirmation(void)
             assert(menu.reset_confirmation && !last_action && !menu.confirmation_ready);
             assert(menu.text.length==6);
             uint8_t leds[LIGHTING_FRAME_SIZE]; menu.brightness=0;
-            keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,midi,false);
+            keyboard_menu_lights(&menu,&raw,lower,upper,leds,now,midi,false,false);
             rgb(menu.y,leds,0,255,0); rgb(menu.n,leds,255,0,0);
             key(KEY_ID_FN,false); frame(); assert(!last_action && !menu.confirmation_ready);
             samples[menu.y]=4000; frame(); assert(menu.confirmation_ready && !last_action);

@@ -62,6 +62,7 @@ void keyboard_app_frame(keyboard_app_t *s,const uint16_t *samples,uint8_t count,
         calibration_active(s->cal),s->midi->lower_muted,&s->midi->music);
     if(action==MENU_MODE) keyboard_midi_toggle(s->midi,raw,now);
     if(action==MENU_LOWER) keyboard_midi_toggle_lower(s->midi,raw);
+    if(action==MENU_JANKO) keyboard_midi_toggle_janko(s->midi,raw);
     if(action==MENU_SELECT_KEY) (void)keyboard_midi_select_music(s->midi,raw,s->menu->selection,s->midi->music.scale);
     if(action==MENU_SELECT_SCALE) (void)keyboard_midi_select_music(s->midi,raw,s->midi->music.root,s->menu->selection);
     if(action==MENU_CALIBRATION) (void)keyboard_app_calibrate(s,now,s->frame_valid);
@@ -118,5 +119,6 @@ void keyboard_app_lights(keyboard_app_t *s,const uint16_t *lo,const uint16_t *hi
     keyboard_midi_lights(s->midi,frame,now);
     calibration_lights(s->cal,frame,now);
     keyboard_menu_lights(s->menu,s->raw,lo,hi,frame,now,s->midi->mode,
-        calibration_active(s->cal) || (s->cal->state!=CAL_IDLE && (uint32_t)(now-s->cal->since)<1500u));
+        calibration_active(s->cal) || (s->cal->state!=CAL_IDLE && (uint32_t)(now-s->cal->since)<1500u),
+        s->midi->janko);
 }

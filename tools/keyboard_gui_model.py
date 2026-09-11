@@ -9,6 +9,19 @@ SIZE = 1152
 MIDI_CONTROLS = {'Fn':'mode', 'RAl':'oct−', 'RCt':'oct+',
                  'LCt':'bend−', 'LAl':'bend+', 'LGu':'mod', 'Spc':'sustain'}
 MAGICS = (b'HKG1',b'HKG2',b'HKG3',b'HKG4',b'HKG5',b'HKG6')
+FLAG_JANKO = 64  # HKG4+ telemetry: the built-in Jankó note layout is active
+# Built-in Jankó layout (Fn+J in MIDI mode) by physical key label, mirroring
+# firmware/app/src/keyboard_midi.c. Display-only; the device owns the mapping.
+JANKO_NOTES = {
+    'Esc':'A#3','1':'C4','2':'D4','3':'E4','4':'F#4','5':'G#4','6':'A#4',
+    '7':'C5','8':'D5','9':'E5','0':'F#5','-':'G#5','=':'A#5',
+    'Tab':'B4','Q':'C#4','W':'D#4','E':'F4','R':'G4','T':'A4','Y':'B5',
+    'U':'C#5','I':'D#5','O':'F5','P':'G5','[':'A5',']':'B6',
+    'Cap':'C4','A':'D4','S':'E4','D':'F#4','F':'G#4','G':'A#4','H':'C5',
+    'J':'D5','K':'E5','L':'F#5',';':'G#5',"'":'A#5',
+    'LSh':'C#4','Z':'D#4','X':'F4','C':'G4','V':'A4','B':'B5','N':'C#5',
+    'M':'D#5',',':'F5','.':'G5','/':'A5','RSh':'B6',
+}
 
 
 @dataclass(frozen=True)
@@ -56,7 +69,7 @@ def decode(data):
     if len(data) not in (480,1088,SIZE) or data[:4] not in MAGICS:
         raise ValueError('bad GUI frame size/magic')
     size, version, profile, count, flags, result, mode = struct.unpack_from('<H6B',data,4)
-    if (bytes(data[:4]),version,size) not in ((b'HKG1',1,480),(b'HKG2',2,1088),(b'HKG3',3,1088),(b'HKG4',4,SIZE),(b'HKG5',5,SIZE),(b'HKG6',6,SIZE)) or len(data) != size or mode > 2 or flags & ~63 or result > 2:
+    if (bytes(data[:4]),version,size) not in ((b'HKG1',1,480),(b'HKG2',2,1088),(b'HKG3',3,1088),(b'HKG4',4,SIZE),(b'HKG5',5,SIZE),(b'HKG6',6,SIZE)) or len(data) != size or mode > 2 or flags & ~127 or result > 2:
         raise ValueError('unsupported GUI header')
     if (profile,count) not in ((0,0),(1,61),(2,62),(3,65)):
         raise ValueError('invalid GUI layout')

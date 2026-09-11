@@ -87,7 +87,7 @@ HKG6 uses this layout:
 | 4 | u16 | 1152 |
 | 6 | u8 | version 6 |
 | 7, 8 | u8 each | profile 0…3, count 0/61/62/65 |
-| 9 | u8 flags | enabled=1, armed=2, valid=4, scan fault=8, LED fault=16, Fn held=32 |
+| 9 | u8 flags | enabled=1, armed=2, valid=4, scan fault=8, LED fault=16, Fn held=32, Jankó layout=64 |
 | 10 | u8 | last result: initial=0, success=1, rejected=2 |
 | 11 | u8 | legacy Fn editor mode 0…2, **not** performance mode |
 | 12 | u32 | GUI sequence |

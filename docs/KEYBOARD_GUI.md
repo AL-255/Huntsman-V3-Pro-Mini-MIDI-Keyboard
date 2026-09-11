@@ -23,10 +23,11 @@ python3 tools/keyboard_gui.py --device /dev/ttyACM1   # explicit node override
 
 Current application: `build-keyboard-fn-menu/huntsman_firmware.bin`, exactly 131072 bytes,
 linked at `0x20000000`, sha256
-`451ac53b848777b78d72e53bbd9db9a09b76e525a5a91628af12a722bf8c8394`
+`9ce7e6be640d916c75db4a9bb04fb5679605f8dac983e52218badb889d263af3`
 (flashed with the sibling updater's application-only path and verified live:
 GUI telemetry, pinned-sensor stream at ~1.35 k samples/s, stream switch-back,
-bottom-out velocity windows at the shared 1500 threshold). Original
+bottom-out velocity windows at the shared 1500 threshold, and a physical
+Fn+J Jankó toggle reported through the new telemetry bit). Original
 bootloader/update transport is unchanged.
 
 The Linux GUI uses Python's standard library and Tk (`python3-tk` must be
@@ -108,6 +109,11 @@ defaults once all keys are neutral. The GUI observes calibration generation 0
 afterward; simply opening or cancelling confirmation does not change storage.
 MIDI mapping controls use note names or
 numbers; Fn, Left Ctrl/Windows/Alt, Right Alt/Ctrl and Space are reserved controls.
+While the built-in Jankó layout is active (Fn+J in MIDI mode) the status line
+adds `JANKÓ layout (Fn+J)` and every key caption shows the layout's note
+instead of the configured mapping; the mapping itself is unchanged and returns
+as soon as the layout is switched off. The flags byte's bit 6 carries this
+state in HKG4+ telemetry.
 The GUI labels Right Alt/Ctrl octave −/+, Left Ctrl/Alt bend −/+ and Left
 Windows modulation, and Space sustain. Space uses its editable Schmitt pair
 to send CC64 127/0. Wheels use fixed 3800…1000 endpoints, not GUI Schmitt

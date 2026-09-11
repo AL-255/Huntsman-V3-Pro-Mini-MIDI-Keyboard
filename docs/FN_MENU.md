@@ -25,7 +25,8 @@ a confirmation screen instead of clearing immediately.
 | Fn+K | LIGHT- | Lower brightness one step |
 | Fn+L | LIGHT+ | Raise brightness one step |
 | Fn+R | RESET | Open RESET? confirmation (Y confirms, N cancels) |
-| Fn+Left Shift | LOWER-OFF / LOWER-ON | Toggle Caps/Shift-row MIDI notes (MIDI mode only) |
+| Fn+Left Shift | LOWER-OFF / LOWER-ON | Toggle Caps/Shift-row MIDI notes (MIDI mode only; ignored in Jankó mode) |
+| Fn+J | JANKO | Toggle the built-in Jankó note layout (MIDI mode only) |
 | Fn+E | KEY | Open root selection (MIDI mode only) |
 | Fn+S | SCALE | Open scale selection (MIDI mode only) |
 
@@ -64,6 +65,17 @@ Settings previews, confirmation and calibration take priority over keyboard
 shortcuts and clear held output. Native tests exercise all three layouts;
 compiled ARM tests check all twenty shortcuts, both release orders, repeated
 taps, arrow reports and green LED channel output using modeled ASIC input.
+
+## Jankó layout toggle
+
+Fn+J is a white MIDI-only settings hint that turns green while the layout is
+active. Its preview `JANKO` is followed by a release-only commit, then all keys
+must be released before output resumes: the toggle aborts voices and pending
+strikes. The layout replaces the playing notes of the letter, number and
+punctuation rows with a staggered whole-tone arrangement; the configured
+mapping is untouched and returns when the layout is switched off. The
+root/scale filter still applies. **Fn+Left Shift is ineffective in Jankó
+mode** — the lower rows always play — and the J hint stays green as a reminder.
 
 ## MIDI lower-row toggle
 

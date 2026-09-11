@@ -10,7 +10,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from keyboard_gui_model import Snapshot, ansi_geometry, profile_from_snapshot, validate_pair, validate_profile, note_name, parse_note, MIDI_CONTROLS, CAPTURE_POINTS, KeystrokeCapture
+from keyboard_gui_model import Snapshot, ansi_geometry, profile_from_snapshot, validate_pair, validate_profile, note_name, parse_note, MIDI_CONTROLS, CAPTURE_POINTS, KeystrokeCapture, FLAG_JANKO, JANKO_NOTES
 from keyboard_gui_transport import Connection, find_cdc_device, USB_VENDOR_ID, USB_PRODUCT_ID
 from last_key_stream import press_velocity, velocity_window, VELOCITY_WINDOW
 
@@ -252,10 +252,12 @@ class App:
             if valid and s.version >= 2 and s.velocity_state[index] & 2:
                 result = f'v{s.velocity[index]:.3f}' if s.version >= 3 else f'v{s.velocity[index]:+d}'
             self.canvas.itemconfigure(velocity,text=result)
+        janko = bool(s and s.version >= 4 and s.flags & FLAG_JANKO)
         for key in self.keys:
             label = key.label
             if s and s.version >= 4 and s.count == 61:
-                suffix = MIDI_CONTROLS.get(label,note_name(s.midi_mapping[key.sensor]))
+                note = JANKO_NOTES.get(label) if janko else None
+                suffix = MIDI_CONTROLS.get(label,note or note_name(s.midi_mapping[key.sensor]))
                 label += '/'+suffix
             if key.sensor in self.titles: self.canvas.itemconfigure(self.titles[key.sensor],text=label)
         if s and s.count == 61:
@@ -440,6 +442,7 @@ class App:
             if not stale and s.mode: state = f'Legacy FN editor {s.mode} — Escape to exit; use GUI for raw thresholds'
             if s.version >= 4:
                 state += f' | {"MIDI" if s.performance_mode else "KEYBOARD"} | octave {s.octave:+d} | MIDI errors={s.midi_errors}'
+                if s.flags & FLAG_JANKO: state += ' | JANKÓ layout (Fn+J)'
                 if s.midi_cleanup: state += ' | MIDI note cleanup pending'
             if s.profile not in (0,1): state = 'Unsupported graphical layout (ANSI only)'
             self.status.set(f'{"DEMO • " if self.demo else ""}{state}  |  {s.count} sensors  |  valid={bool(s.flags & 4)}  |  '

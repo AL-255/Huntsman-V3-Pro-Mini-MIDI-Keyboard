@@ -156,6 +156,15 @@ def main():
             pump_until(lambda:not app.hold_mode.get() and app.connection.stream_mode == 'gui')
             pump_until(app.usable,4)
             pump_until(lambda:len(app.history) > history_len,3)
+            # Jankó layout telemetry: status marker and built-in note labels.
+            device.flags |= 64
+            pump_until(lambda:'JANKÓ' in app.status.get())
+            root.update()
+            assert app.canvas.itemcget(app.titles[32],'text') == 'A/D4'  # Jankó row note, not the mapping
+            device.flags &= ~64
+            pump_until(lambda:'JANKÓ' not in app.status.get())
+            root.update()
+            assert app.canvas.itemcget(app.titles[32],'text') == 'A/C4'  # configured mapping again
             app.disable_button.invoke()
             pump_until(lambda:not app.snapshot.flags & 1)
             app.toggle_connection()

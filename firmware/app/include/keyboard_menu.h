@@ -6,8 +6,9 @@
 #include "midi_music.h"
 
 enum { MENU_NONE, MENU_CALIBRATION, MENU_TRIGGER, MENU_MODE, MENU_LIGHT_DOWN, MENU_LIGHT_UP,
-       MENU_RAPID, MENU_RESET, MENU_LOWER, MENU_KEY, MENU_SCALE, MENU_SELECT_KEY, MENU_SELECT_SCALE };
-#define MENU_OPTION_COUNT MENU_SCALE
+       MENU_RAPID, MENU_RESET, MENU_LOWER, MENU_KEY, MENU_SCALE, MENU_JANKO,
+       MENU_SELECT_KEY, MENU_SELECT_SCALE };
+#define MENU_OPTION_COUNT MENU_JANKO
 
 typedef struct {
     uint32_t bar_at, pending_revision;
@@ -29,8 +30,10 @@ uint8_t keyboard_menu_frame(keyboard_menu_t *s, keyboard_raw_t *raw,
                          const midi_music_config_t *music);
 void keyboard_menu_lights(keyboard_menu_t *s, const keyboard_raw_t *raw,
                           const uint16_t *lower, const uint16_t *upper,
-                          uint8_t *frame, uint32_t now, bool midi, bool calibration);
+                          uint8_t *frame, uint32_t now, bool midi, bool calibration,
+                          bool janko);
 uint8_t keyboard_menu_brightness(const keyboard_menu_t *s);
+/* True while the Jankó layout is active, for hint colouring. */
 uint8_t keyboard_menu_control(uint8_t profile, uint8_t key);
 void keyboard_menu_cancel(keyboard_menu_t *s);
 bool keyboard_menu_thresholds(keyboard_raw_t *raw, const uint16_t *lower,

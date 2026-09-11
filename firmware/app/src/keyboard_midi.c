@@ -79,12 +79,69 @@ void keyboard_midi_toggle_lower(keyboard_midi_t *s, keyboard_raw_t *raw)
     keyboard_raw_invalidate(raw); /* all keys neutral before new note edges */
 }
 
+
+/* Jankó mode (Fn+J in MIDI mode): a staggered whole-tone layout replacing the
+ * configured notes for the keys below. Physical HID usages keep this table
+ * portable across board layouts; keys that are not listed (controls, modifier
+ * roles, Enter, Backspace, space) keep their configured mapping and role.
+ * Rows: number row, Tab row, Caps row, Shift row with the user's notes. */
+static const uint8_t janko_notes[][2] = {
+    {0x29,58},{0x1e,60},{0x1f,62},{0x20,64},{0x21,66},{0x22,68},{0x23,70},
+    {0x24,72},{0x25,74},{0x26,76},{0x27,78},{0x2d,80},{0x2e,82},
+    {0x2b,71},{0x14,61},{0x1a,63},{0x08,65},{0x15,67},{0x17,69},{0x1c,83},
+    {0x18,73},{0x0c,75},{0x12,77},{0x13,79},{0x2f,81},{0x30,95},
+    {0x39,60},{0x04,62},{0x16,64},{0x07,66},{0x09,68},{0x0a,70},{0x0b,72},
+    {0x0d,74},{0x0e,76},{0x0f,78},{0x33,80},{0x34,82},
+    {0x1d,63},{0x1b,65},{0x06,67},{0x19,69},{0x05,83},{0x11,73},
+    {0x10,75},{0x36,77},{0x37,79},{0x38,81},
+};
+
+/* Left Shift and Right Shift are part of the Jankó rows but the board tables
+ * carry their modifier mask in arg0 with a zero usage (the same convention the
+ * menu uses for Fn+Left Shift). Every other modifier keeps its control role. */
+#define JANKO_LEFT_SHIFT 61u  /* C#4 */
+#define JANKO_RIGHT_SHIFT 95u /* B6  */
+
+static uint8_t janko_note(const keyboard_action_t *a)
+{
+    if (!a || a->type != 2u) return MIDI_UNMAPPED;
+    if (a->arg0 == 2u) return JANKO_LEFT_SHIFT;
+    if (a->arg0 == 32u) return JANKO_RIGHT_SHIFT;
+    if (a->arg0) return MIDI_UNMAPPED;
+    for (unsigned i = 0; i < sizeof(janko_notes)/sizeof(janko_notes[0]); ++i)
+        if (janko_notes[i][0] == a->arg1) return janko_notes[i][1];
+    return MIDI_UNMAPPED;
+}
+
+/* Note a key plays now: the configured mapping, or the Jankó layout entry
+ * while the mode is on. Keys without a Jankó entry keep their mapping. */
+static uint8_t note_mapping(const keyboard_midi_t *s, unsigned sensor)
+{
+    if (!s->janko || !s->profile) return s->mapping[sensor];
+    const uint8_t key = keyboard_key_for_sensor(s->profile, sensor);
+    const keyboard_action_t *a = keyboard_action(s->profile, key, 0);
+    if (!a || a->type != 2u) return s->mapping[sensor];
+    const uint8_t note = janko_note(a);
+    return note == MIDI_UNMAPPED ? s->mapping[sensor] : note;
+}
+
+void keyboard_midi_toggle_janko(keyboard_midi_t *s, keyboard_raw_t *raw)
+{
+    if (!s->mode) return; /* the layout only exists in MIDI mode */
+    s->janko = !s->janko;
+    keyboard_midi_abort(s); /* release notes before re-labelling the keys */
+    keyboard_raw_invalidate(raw); /* all keys neutral before new note edges */
+}
+
 static bool note_enabled(const keyboard_midi_t *s, unsigned sensor)
 {
-    const int note=(int)s->mapping[sensor]+12*(int)s->octave;
-    return s->mapping[sensor]!=MIDI_UNMAPPED && note>=0 &&
-        midi_music_contains(&s->music,(unsigned)note) &&
-        !(s->lower_muted && (s->lower_rows[sensor/8u] & (1u<<(sensor%8u))));
+    const uint8_t base=note_mapping(s,sensor);
+    const int note=(int)base+12*(int)s->octave;
+    /* Jankó mode always enables the lower row: Fn+Left Shift is ineffective. */
+    const bool muted=!s->janko && s->lower_muted &&
+        (s->lower_rows[sensor/8u] & (1u<<(sensor%8u)));
+    return base!=MIDI_UNMAPPED && note>=0 &&
+        midi_music_contains(&s->music,(unsigned)note) && !muted;
 }
 
 bool keyboard_midi_select_music(keyboard_midi_t *s, keyboard_raw_t *raw, unsigned root, unsigned scale)
@@ -249,7 +306,7 @@ void keyboard_midi_frame(keyboard_midi_t *s, keyboard_raw_t *raw,
                 }
             }
             if (!fn && raw->down[i] && !s->previous[i] && note_enabled(s,i)) {
-                const int shifted = (int)s->mapping[i] + (int)s->octave * 12;
+                const int shifted = (int)note_mapping(s,i) + (int)s->octave * 12;
                 /* Out-of-range notes are muted, never wrapped or clamped. */
                 if (shifted >= 0 && shifted <= 127) {
                     unsigned slot = 5u;

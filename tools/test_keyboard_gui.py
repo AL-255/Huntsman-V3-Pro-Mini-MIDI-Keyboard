@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
-from keyboard_gui_model import SIZE, CAPTURE_POINTS, KeystrokeCapture, Decoder, decode, ansi_geometry, profile_from_snapshot, validate_profile, note_name, parse_note
+from keyboard_gui_model import SIZE, CAPTURE_POINTS, KeystrokeCapture, Decoder, decode, ansi_geometry, profile_from_snapshot, validate_profile, note_name, parse_note, FLAG_JANKO, JANKO_NOTES
 from keyboard_gui_transport import Connection, find_cdc_device
 
 
@@ -275,6 +275,25 @@ class Tests(unittest.TestCase):
         self.assertEqual(c.fit,(5,0.87))  # first counter rise after the trigger
         c.reset()
         self.assertTrue(c.armed); self.assertEqual(c.points,[]); self.assertIsNone(c.fit)
+
+    def test_janko_layout_model(self):
+        s = decode(packet(flags=7|FLAG_JANKO))
+        self.assertTrue(s.flags & FLAG_JANKO)
+        self.assertEqual(decode(packet(flags=7)).flags & FLAG_JANKO,0)
+        with self.assertRaises(ValueError): decode(packet(flags=128))
+        # Host display table mirrors the firmware rows: whole-tone steps inside
+        # a row and the specified staggered notes on the physical keys.
+        keys = {k.label: k.sensor for k in ansi_geometry()}
+        for label,note in (('Esc','A#3'),('1','C4'),('=','A#5'),('Tab','B4'),
+                           ('Q','C#4'),('Y','B5'),('J','D5'),(']','B6'),
+                           ('Cap','C4'),('LSh','C#4'),('B','B5'),('RSh','B6')):
+            self.assertEqual(JANKO_NOTES[label],note)
+            self.assertIn(label,keys)
+        labels = [k.label for k in ansi_geometry()]
+        self.assertEqual(sorted(JANKO_NOTES),sorted(l for l in labels if l in JANKO_NOTES))
+        self.assertEqual(len(JANKO_NOTES),50)
+        for label in ('Fn','Spc','Ent','BkS','\\','Mnu','RAl','RCt','LCt','LGu','LAl'):
+            self.assertNotIn(label,JANKO_NOTES)
 
     def test_decoder(self):
         data = packet()
